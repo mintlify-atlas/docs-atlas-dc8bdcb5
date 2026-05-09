@@ -1,0 +1,306 @@
+---
+title: 'Logging, Queries, and Debugging HELICS Co-Simulations'
+description: 'How to configure HELICS log levels, write to log files, use queries to inspect federation state, and diagnose common co-simulation problems.'
+keywords: ['HELICS', 'logging', 'debugging', 'log level', 'queries', 'federation state', 'co-simulation debug', 'webserver']
+---
+
+Understanding what is happening inside a running HELICS co-simulation is essential for both verifying correct operation and diagnosing problems. HELICS provides a multi-level logging system that produces human-readable output, a query API for inspecting federation state at runtime, and a web interface for monitoring a live co-simulation. This guide explains how to configure all three and how to use them together to debug common issues.
+
+## Log levels
+
+HELICS defines a hierarchy of log levels. Each level includes all messages from all less-verbose levels above it. Setting a higher level produces more output and can have a measurable performance impact at the `data` and `trace` levels.
+
+| API enumeration | JSON keyword | What it logs |
+|---|---|---|
+| `HELICS_LOG_LEVEL_NO_PRINT` | `no_print` | Nothing. Logging is disabled. |
+| `HELICS_LOG_LEVEL_ERROR` | `error` | Internal HELICS errors and faults. |
+| `HELICS_LOG_LEVEL_PROFILING` | `profiling` | Profiling messages for performance analysis. |
+| `HELICS_LOG_LEVEL_WARNING` | `warning` | Unusual or potentially incorrect conditions. |
+| `HELICS_LOG_LEVEL_SUMMARY` | `summary` | Startup and shutdown summaries. The broker logs a count of connected federates. |
+| `HELICS_LOG_LEVEL_CONNECTIONS` | `connections` | Each federate connection and disconnection event. |
+| `HELICS_LOG_LEVEL_INTERFACES` | `interfaces` | Creation of publications, subscriptions, endpoints, and filters. |
+| `HELICS_LOG_LEVEL_TIMING` | `timing` | Mode transitions and time advancement grants. |
+| `HELICS_LOG_LEVEL_DEBUG` | `debug` | Debugging information, similar in volume to timing. |
+| `HELICS_LOG_LEVEL_DATA` | `data` | All data passage events (values sent and received). |
+| `HELICS_LOG_LEVEL_TRACE` | `trace` | All internal HELICS messages, including low-level coordination traffic. |
+
+<Warning>
+  The `timing`, `data`, and `trace` levels generate very large numbers of log messages and will slow down a running co-simulation. Use them only when actively debugging a specific problem, not in production runs.
+</Warning>
+
+A typical log line looks like:
+
+```text
+echo1 (131072) (0)[t=4.0]::Time mismatch detected granted time >requested time 5.5 vs 5.0
+```
+
+The format is `<name> (<internal_id>) (<flags>)[t=<sim_time>]::<message>`. Auto-generated broker or core names (like `26516-enRPa-PzaBB-ZG190-lj14t`) include a thread ID prefix.
+
+## Configuring logging
+
+### In a federate JSON configuration file
+
+```json
+{
+    "name": "Battery",
+    "loglevel": "warning",
+    "logfile": "Battery.log",
+    "file_log_level": "timing",
+    "console_log_level": "warning",
+    "force_logging_flush": false
+}
+```
+
+Use `loglevel` to set the same level for both file and console. Override independently with `file_log_level` and `console_log_level`.
+
+### On the broker command line
+
+```bash
+helics_broker -f 3 --loglevel=connections --logfile=broker.log
+```
+
+### Via the Python API
+
+```python
+import helics as h
+
+# Set level on the federate info object before creating the federate
+fi = h.helicsCreateFederateInfo()
+h.helicsFederateInfoSetIntegerProperty(
+    fi,
+    h.HELICS_PROPERTY_INT_LOG_LEVEL,
+    h.HELICS_LOG_LEVEL_WARNING
+)
+
+# Or set it on an existing federate
+h.helicsFederateSetIntegerProperty(
+    fed,
+    h.HELICS_PROPERTY_INT_LOG_LEVEL,
+    h.HELICS_LOG_LEVEL_TIMING
+)
+```
+
+Separate properties exist for file and console log levels:
+- `HELICS_PROPERTY_INT_LOG_LEVEL` — both file and console
+- `HELICS_PROPERTY_INT_FILE_LOG_LEVEL` — file only
+- `HELICS_PROPERTY_INT_CONSOLE_LOG_LEVEL` — console only
+
+### Setting log file path
+
+<Tabs>
+  <Tab title="Python API">
+    ```python
+    # On a federate (also sets the log file for its core)
+    h.helicsFederateSetLogFile(fed, "my_federate.log")
+
+    # On a core directly
+    h.helicsCoreSetLogFile(core, "core.log")
+    ```
+  </Tab>
+  <Tab title="Core init string">
+    ```python
+    fi = h.helicsCreateFederateInfo()
+    h.helicsFederateInfoSetCoreInitString(fi, "--logfile=my_federate.log")
+    ```
+  </Tab>
+  <Tab title="HELICS runner JSON">
+    ```json
+    {
+        "federates": [
+            {
+                "directory": ".",
+                "exec": "helics_broker -f 2 --loglevel=7",
+                "host": "localhost",
+                "name": "broker"
+            }
+        ],
+        "name": "my_cosim"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Custom logging callback
+
+You can capture all log messages in your own code rather than writing them to a file:
+
+```python
+def my_log_handler(log_level, identifier, message, user_data):
+    print(f"[{identifier}] {message}")
+
+h.helicsFederateSetLoggingCallback(fed, my_log_handler, None)
+```
+
+In C++:
+
+```cpp
+fed->setLoggingCallback(
+    [](int level, const std::string& id, const std::string& msg) {
+        std::cout << "[" << id << "] " << msg << std::endl;
+    }
+);
+```
+
+## Log buffer
+
+As of HELICS 3.2, federates, cores, and brokers can maintain an in-memory circular buffer of recent log messages. This buffer persists even after a federate disconnects, making it useful for post-run diagnostics.
+
+Enable the buffer in JSON:
+```json
+{ "logbuffer": 10 }
+```
+
+Or on the command line:
+```bash
+helics_broker -f 3 --logbuffer=20
+```
+
+The buffer contents are retrievable via the `"logs"` query (see below).
+
+## The web interface
+
+HELICS includes a REST web server that can be attached to a running broker. It is available starting in HELICS 2.4 and requires Boost >= 1.70. It provides an HTTP API for monitoring and interacting with a running co-simulation.
+
+Start a broker with the web server enabled:
+
+```bash
+helics_broker_server --http --zmq --duration 30minutes
+```
+
+The web server listens on `localhost:43542` by default. To change the port or interface:
+
+```bash
+helics_broker_server --web --zmq --http_server_args="--http_port=8080 --external"
+```
+
+Or use a configuration file:
+
+```json
+{
+    "http": {
+        "port": 8080,
+        "interface": "0.0.0.0"
+    }
+}
+```
+
+Pass it to the broker server:
+```bash
+helics_broker_server --web --zmq --config broker_server_config.json
+```
+
+<Note>
+  The federation must be launched via `helics run` or the broker server for the web interface to be available. A standalone `helics_broker` process does not include the web server.
+</Note>
+
+## Queries for runtime debugging
+
+Queries are the primary tool for inspecting the state of a running federation. Any federate, core, or broker in the federation can be queried. All queries return JSON.
+
+### Query syntax
+
+**Python:**
+```python
+result = h.helicsCreateQuery("broker", "federates")
+query_result = h.helicsQueryExecute(result, fed)
+h.helicsQueryFree(result)
+print(query_result)
+```
+
+**C++:**
+```cpp
+std::string result = fed->query("broker", "federates");
+```
+
+### Query targets
+
+| Target string | What it resolves to |
+|---|---|
+| `"broker"` | The first broker this federate is connected to |
+| `"root"` or `"rootbroker"` | The root broker of the entire federation |
+| `"core"` | The core attached to this federate |
+| `"federate"` | This federate itself |
+| `"<name>"` | Any named federate, core, or broker |
+
+### Useful federate queries
+
+| Query string | Returns |
+|---|---|
+| `"name"` | The federate's identifier string |
+| `"state"` | Current state of the federate |
+| `"publications"` | List of all publications registered on this federate |
+| `"subscriptions"` | List of all subscriptions |
+| `"inputs"` | List of all inputs |
+| `"endpoints"` | List of all endpoints |
+| `"current_time"` | The federate's current simulation time |
+| `"dependencies"` | Objects this federate depends on for time advancement |
+| `"dependency_graph"` | Full dependency graph across the federation |
+| `"data_flow_graph"` | All data connections in the federation |
+| `"logs"` | Buffered log messages (requires `logbuffer` to be set) |
+
+### Useful broker queries
+
+```python
+# See all connected federate names
+h.helicsQueryExecute(h.helicsCreateQuery("broker", "federates"), fed)
+
+# See the global federation state
+h.helicsQueryExecute(h.helicsCreateQuery("root", "global_state"), fed)
+
+# See all publication-subscription connections
+h.helicsQueryExecute(h.helicsCreateQuery("root", "data_flow_graph"), fed)
+```
+
+## Common issues and solutions
+
+<AccordionGroup>
+  <Accordion title="Federation hangs at initialization">
+    **Symptom:** The co-simulation starts but never enters executing mode; all federates are waiting.
+
+    **Causes and solutions:**
+    - The broker was started with `-f N` but fewer than N federates connected. Check that all expected federate processes actually launched successfully.
+    - A federate failed during startup before calling `helicsFederateEnterExecutingMode`. Check that federate's log for errors.
+    - A required subscription has no matching publisher. Set `loglevel` to `connections` or `interfaces` and look for warnings about unmatched interfaces.
+
+    **Diagnostic query:**
+    ```python
+    # Check how many federates have entered init mode
+    result = h.helicsQueryExecute(h.helicsCreateQuery("broker", "isinit"), fed)
+    ```
+  </Accordion>
+
+  <Accordion title="Time mismatch or unexpected time grants">
+    **Symptom:** Log shows `Time mismatch detected granted time > requested time`.
+
+    **Cause:** A federate was granted a time later than it requested. This typically happens when `period` and `offset` settings cause rounding or when a federate requests a time that is not an integer multiple of its declared period.
+
+    **Solution:** Set `loglevel` to `timing` to see all time grant events. Verify that all time requests are consistent with the `period` and `offset` declared in the federate's configuration.
+  </Accordion>
+
+  <Accordion title="Federate receives stale or zero values">
+    **Symptom:** A subscription always returns the default value or a value that is several time steps old.
+
+    **Causes and solutions:**
+    - The subscription key does not exactly match the publication key. Check that `global` settings are consistent between publisher and subscriber. Run the `data_flow_graph` query on the root broker to see whether the connection exists.
+    - The publishing federate has `only_transmit_on_change` enabled and the value hasn't changed. Disable the flag or verify the publisher is updating the value.
+    - Unit mismatch: if units are specified on both ends and they are incompatible, HELICS may reject the data. Check for unit warning messages at the `warning` log level.
+  </Accordion>
+
+  <Accordion title="Federate hangs indefinitely during the time loop">
+    **Symptom:** A federate stops advancing in the time loop and never returns from `helicsFederateRequestTime`.
+
+    **Cause:** Another federate in the federation has stopped responding, which blocks time advancement for all federates that depend on it.
+
+    **Solution:** Set `terminate_on_error: true` on all federates so that a crashed federate causes the entire federation to exit rather than hang. During debugging, use the broker's `--debugging` flag (equivalent to `--slow_responding --disable_timer`) to prevent timeout-based disconnections that might obscure the root cause.
+
+    ```bash
+    helics_broker -f 3 --debugging --loglevel=timing
+    ```
+  </Accordion>
+
+  <Accordion title="Type or unit conversion errors">
+    **Symptom:** Log shows errors about type mismatch or unit mismatch between a publication and subscription.
+
+    **Solution:** Enable `strict_input_type_checking: false` temporarily to confirm the issue is type-related. Then fix the types to match. HELICS supports automatic conversion between numeric types (int, double, complex) but will error on fundamentally incompatible type pairs. Unit conversion is only performed for `double` type publications.
+  </Accordion>
+</AccordionGroup>

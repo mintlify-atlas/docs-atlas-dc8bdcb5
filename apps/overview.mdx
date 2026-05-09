@@ -1,0 +1,101 @@
+---
+title: "HELICS Built-In Helper Apps — Overview and Use Cases"
+description: "HELICS ships with Broker, Player, Recorder, Echo, Tracer, Clone, Connector, and Source apps for testing and managing co-simulations without extra code."
+keywords: ["helics apps", "helics tools", "helics broker", "helics player", "helics recorder", "helics echo", "helics tracer"]
+---
+
+HELICS includes a set of built-in helper applications that are installed alongside the core library. These apps each act as standalone federates or coordination utilities you can use without writing any code: inject synthetic data into a running co-simulation, capture data to file for replay, mirror messages back to their sender, or automatically create and manage brokers. Whether you are debugging a new federation or running a large-scale production co-simulation, the HELICS apps give you ready-made building blocks for common tasks.
+
+## Available apps
+
+<CardGroup cols={2}>
+  <Card title="Broker" icon="network-wired" href="/apps/broker">
+    Starts and manages a HELICS broker — the coordination hub that routes data and synchronizes time across all federates in a federation.
+  </Card>
+  <Card title="Player" icon="play" href="/apps/player-recorder">
+    Reads a file of time-stamped values or messages and publishes them into the federation on schedule, acting as a send-only federate.
+  </Card>
+  <Card title="Recorder" icon="circle-dot" href="/apps/player-recorder">
+    Subscribes to publications and endpoint messages in a running federation and saves them to a file that a Player can replay later.
+  </Card>
+  <Card title="Echo" icon="rotate-left" href="/apps/player-recorder">
+    Reflects any message sent to its endpoints back to the original sender, optionally with a configurable delay. Useful for testing communication pathways.
+  </Card>
+  <Card title="Tracer" icon="chart-line" href="/apps/player-recorder">
+    Displays subscribed values and endpoint messages to the console in real time. Functions like the Recorder but writes to screen rather than to a file.
+  </Card>
+  <Card title="Clone" icon="copy" href="/apps/player-recorder">
+    Captures all publications, subscriptions, and messages from a target federate and stores them in a JSON file that a Player can use for full replay.
+  </Card>
+  <Card title="Connector" icon="link" href="/apps/player-recorder">
+    Automatically wires unconnected interfaces together using match-file rules, including regex-based bulk matching and two-phase interface creation.
+  </Card>
+  <Card title="Source" icon="wave-square" href="/apps/player-recorder">
+    Generates synthetic signals — sine waves, ramps, pulses, square waves, and random walks — without requiring a pre-recorded data file.
+  </Card>
+</CardGroup>
+
+## Accessing the apps
+
+All HELICS apps are installed as executable binaries when you install HELICS. The primary executables are:
+
+- `helics_broker` — standalone broker
+- `helics_broker_server` — dynamic broker server
+- `helics_player` — player app
+- `helics_recorder` — recorder app
+- `helics_connector` — connector app
+- `helics_app` — unified launcher for Echo, Tracer, Clone, Source, and others
+
+The `helics_app` launcher lets you invoke any app by name:
+
+```bash
+helics_app echo echo_config.txt --stop 10
+helics_app tracer tracer_config.txt --stop 10
+helics_app clone fed1 -o fed1.json --stop 10
+helics_app source source_config.json --stop 10
+```
+
+<Tip>
+  Run any app with `--help` to see its full list of accepted arguments, for example `helics_broker --help` or `helics_app echo --help`.
+</Tip>
+
+## Using apps via Docker
+
+The official HELICS Docker image provides all installed apps without requiring a local build. You can pull the image and run apps directly:
+
+```bash
+docker pull helics/helics
+```
+
+Run a broker inside a container and expose the default ZMQ port:
+
+```bash
+docker run --rm -p 23404:23404 helics/helics helics_broker -f 2 --loglevel=warning
+```
+
+Run a player from inside a container, mounting a local data directory:
+
+```bash
+docker run --rm -v "$(pwd)/data:/data" helics/helics \
+  helics_player /data/player_file.txt --broker=<host-ip> --stop 100
+```
+
+<Note>
+  When federates run on different hosts or containers, pass `--broker=<address>` to point apps at the correct broker address. Use `--ipv4` or `--external` on the broker side to listen on a non-loopback interface.
+</Note>
+
+## Common use cases
+
+**Injecting test inputs.** Use the Player app to supply known values to one or more federates during development, removing the need to run the full set of simulators for every test run.
+
+**Capturing simulation output.** The Recorder captures everything a federation publishes. Combine it with the Player to reproduce an entire run deterministically — useful for debugging non-deterministic behavior or running regression tests.
+
+**Full federate replay.** The Clone app records a complete federate (all its publications, subscriptions, and messages) to a single JSON file. You can later replay that federate using the Player without the original simulation tool installed.
+
+**Communication path verification.** The Echo app responds to every message it receives, letting you confirm that endpoints are connected, filters are working, and round-trip latency is within tolerance.
+
+**Live monitoring.** The Tracer displays values as they change during a running simulation. It is the fastest way to verify that data is flowing between federates correctly.
+
+**Automatic interface wiring.** The Connector app reads a match-file specifying which publications connect to which inputs, then makes those connections automatically during federation initialization — eliminating hand-written connection configuration for large federations.
+
+**Synthetic signal generation.** The Source app generates mathematical waveforms on demand. Use it to test how a downstream federate responds to a ramp, a step change, or a noisy random signal without building a dedicated test federate.

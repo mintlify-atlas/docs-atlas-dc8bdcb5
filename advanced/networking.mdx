@@ -1,0 +1,319 @@
+---
+title: 'HELICS Network Configuration for Multi-Machine Setups'
+description: 'Configure HELICS brokers for multi-machine deployments, choose the right core type, set explicit ports, and enable encrypted TCP communication.'
+keywords: ['networking', 'broker address', 'broker port', 'local port', 'tcp_ss', 'zmq_ss', 'encrypted communication', 'firewall', 'multi-computer', 'ipv4']
+---
+
+Running a HELICS co-simulation on a single machine with the default settings requires almost no network configuration—the ZMQ core opens two localhost ports and all federates connect without any explicit addressing. Once a co-simulation spans multiple compute nodes, though, the defaults are no longer sufficient: federates on remote machines need to know where to find the broker, firewalls need to allow the right ports, and in some environments the number of ports that ZMQ opens by default becomes a liability. This page covers how to configure HELICS networking for multi-machine deployments, which core type to choose for complex environments, how to use encryption, and what environment variables control networking behaviour.
+
+## Default operation with the ZMQ core
+
+When a ZMQ-based broker starts with no explicit networking arguments, it opens two ports on the local machine:
+
+- **Port 23405**: high-priority traffic channel.
+- **Port 23406**: low-priority traffic channel.
+
+Federates connect to the broker on port 23405. Once connected, the broker assigns each federate a dedicated port for all subsequent broker-to-federate communication. This means a federation with many federates uses many ports—one pair for the broker's listen sockets, and then one additional dedicated port per federate.
+
+On a single machine this is transparent: the operating system assigns the extra ports from ephemeral ranges and nothing leaves the host. On multiple machines the federate-assigned ports are a challenge because firewalls would need to permit a large, unpredictable range of ports.
+
+## Specialty cores for complex networks
+
+### `zmq_ss` core
+
+The `zmq_ss` (ZMQ single-socket) core is a variant of the ZMQ core that limits itself to a single socket regardless of how many federates are connected. This directly addresses the port proliferation problem and simplifies firewall rules to a single port. Use it when:
+
+- You are approaching the per-machine port limit with a large number of federates.
+- Firewall rules make opening many ports impractical.
+- You want to stay with ZMQ semantics but need a simpler networking footprint.
+
+### `tcp_ss` core
+
+The `tcp_ss` (TCP single-socket) core is similar to `zmq_ss` but uses raw TCP rather than the ZMQ library. It is the recommended core for complex networking environments because:
+
+- It uses exactly one socket (IP address + port) per broker.
+- The broker can initiate outgoing connections to federates, which is critical in environments where firewalls block inbound connections to federate machines.
+- It removes the ZMQ dependency, which can simplify deployment in environments where only standard TCP is available.
+
+<Tip>
+When in doubt on a multi-machine deployment, start with `tcp_ss`. It provides the most predictable networking behaviour and requires the fewest firewall rules.
+</Tip>
+
+## Key networking options
+
+These options are available on brokers, sub-brokers, and federates regardless of core type.
+
+| Option | Where to use | Description |
+|---|---|---|
+| `broker_address` | Federates and sub-brokers | IP address (and optionally port) of the parent broker to connect to |
+| `broker_port` | Federates and sub-brokers | Port number on the parent broker to connect to |
+| `local_interface` | Brokers, sub-brokers, federates | IP address/socket this component listens on for incoming connections |
+| `local_port` | Brokers, sub-brokers, federates | Port this component listens on |
+| `--ipv4` | Brokers | Opens ports on all external IPv4 interfaces (shortcut for multi-machine setups) |
+
+The `broker_address` option can include the port by appending it after the IP: `tcp://192.168.1.10:23405`. When you do this, `broker_port` does not need to be set separately.
+
+<Warning>
+There is also a generic `--port` option in HELICS that attempts to be a catch-all. Experience has shown that its generic behaviour causes confusion. Prefer the explicit `--broker_port` and `--local_port` options instead.
+</Warning>
+
+### Setting options in JSON configuration files
+
+All networking options can be set in a federate's JSON configuration file, as part of the `coreInit` string, or in the `broker_init_string` when creating a broker via API:
+
+```json
+{
+  "name": "MyFederate",
+  "coreInit": "--broker_address=tcp://10.0.0.1:23405 --broker_port=23405"
+}
+```
+
+Or using explicit fields:
+
+```json
+{
+  "name": "MyFederate",
+  "broker_address": "tcp://10.0.0.1",
+  "broker_port": 23405,
+  "local_port": 23500
+}
+```
+
+## Multi-machine setup
+
+<Steps>
+  <Step title="Start the broker on the broker machine">
+    Add `--ipv4` to open external-facing ports. The broker machine's IP address is `10.0.0.1` in this example:
+    ```bash
+    helics_broker -f3 --loglevel=warning --ipv4
+    ```
+    The default port (23405) is used here. To use a non-default port, add `--port=<number>`:
+    ```bash
+    helics_broker -f3 --loglevel=warning --ipv4 --port=23500
+    ```
+  </Step>
+  <Step title="Configure remote federates with broker_address">
+    Each federate on a different machine must be told where to find the broker. Add `broker_address` to the federate's JSON configuration:
+    ```json
+    {
+      "name": "RemoteFederate",
+      "coreInit": "--broker_address=tcp://10.0.0.1"
+    }
+    ```
+    If the broker is using a non-default port:
+    ```json
+    {
+      "name": "RemoteFederate",
+      "coreInit": "--broker_address=tcp://10.0.0.1:23500"
+    }
+    ```
+  </Step>
+  <Step title="Open firewall rules">
+    On the broker machine, allow inbound TCP connections on the port(s) the broker is listening on (default 23405 for ZMQ, 23406 for the low-priority channel). With `tcp_ss`, only a single port needs to be opened.
+  </Step>
+</Steps>
+
+## Address and port configuration reference
+
+### For brokers
+
+```bash
+# Open all external IPv4 interfaces on default port
+helics_broker -f5 --ipv4
+
+# Specify an explicit listen port
+helics_broker -f5 --local_port=23500
+
+# Specify both interface and port
+helics_broker -f5 --local_interface=10.0.0.1 --local_port=23500
+
+# Sub-broker connecting to a root broker at 10.0.0.1:24000, listening on port 25000
+helics_broker -f5 --broker_address=tcp://10.0.0.1:24000 --local_port=25000
+```
+
+### For federates
+
+```bash
+# Connect to broker at explicit address
+my_federate --broker_address=tcp://10.0.0.1
+
+# Connect to broker with non-default port
+my_federate --broker_address=tcp://10.0.0.1:23500
+
+# Specify both broker address and own listen port
+my_federate --broker_address=tcp://10.0.0.1 --local_port=24000
+```
+
+## Network interface selection
+
+By default, HELICS brokers listen only on localhost. To accept connections from other machines:
+
+- `--ipv4`: listen on all IPv4 interfaces.
+- `--local_interface=<IP>`: listen on a specific interface by its IP address.
+- `--external`: similar to `--ipv4` but also used in some webserver contexts.
+
+For multi-machine co-simulations with complex routing, specifying the exact interface using `--local_interface` prevents HELICS from binding to an unintended network interface.
+
+## Firewall rules
+
+The ports that need to be open depend on the core type:
+
+<Tabs>
+  <Tab title="ZMQ core (default)">
+    The broker opens two well-known ports by default:
+    - Inbound TCP on port **23405** (high-priority channel)
+    - Inbound TCP on port **23406** (low-priority channel)
+
+    Additionally, for each federate that connects, the broker assigns a dedicated ephemeral port for direct broker-federate communication. This requires either:
+    - A permissive firewall rule for a range of high ports, or
+    - Switching to `zmq_ss` to eliminate the per-federate ports.
+  </Tab>
+  <Tab title="zmq_ss or tcp_ss core">
+    Only a single port needs to be open:
+    - Inbound TCP on the configured port (default **23405**)
+
+    This is the recommended configuration for multi-machine deployments with strict firewall policies.
+  </Tab>
+</Tabs>
+
+## Encrypted communication
+
+HELICS TCP and TCPSS cores support TLS/SSL encryption via OpenSSL. Encryption is useful when federates communicate across institutional boundaries or over the public internet.
+
+<Warning>
+HELICS encryption requires building HELICS from source with the `HELICS_ENABLE_ENCRYPTION` CMake option set to `ON`. The default distributed binaries do not include encryption support. Any certificates used for testing that appear in the HELICS repository are for testing only and must not be used for real co-simulations.
+</Warning>
+
+### Enabling encryption
+
+<Tabs>
+  <Tab title="Command line">
+    ```bash
+    helics_broker --encrypted --encryption_config=openssl.json
+    my_federate --encrypted --encryption_config=openssl.json
+    ```
+  </Tab>
+  <Tab title="Environment variables">
+    ```bash
+    export HELICS_ENCRYPTION=true
+    export HELICS_ENCRYPTION_CONFIG="/absolute/path/to/openssl.json"
+    # Now launch broker and federates without --encrypted or --encryption_config
+    helics_broker -f3
+    my_federate
+    ```
+    Using absolute paths for `HELICS_ENCRYPTION_CONFIG` avoids errors when federates run from different working directories.
+  </Tab>
+  <Tab title="JSON config file">
+    ```json
+    {
+      "encrypted": true,
+      "encryption_config": "/home/username/openssl.json"
+    }
+    ```
+  </Tab>
+  <Tab title="C++ federate code">
+    ```cpp
+    helics::FederateInfo fi(
+        "--core_type=tcp --encrypted --encryption_config=/path/to/openssl.json"
+    );
+    helics::ValueFederate fed("fed1", fi);
+    ```
+  </Tab>
+</Tabs>
+
+### Encryption configuration file
+
+The encryption config JSON file specifies the certificate and key material:
+
+```json
+{
+  "encrypted": true,
+  "verify_file": "/path/to/ca.pem",
+  "certificate_chain_file": "/path/to/machine.pem",
+  "private_key_file": "/path/to/machine.pem",
+  "tmp_dh_file": "/path/to/dh4096.pem",
+  "password": "private-key-password"
+}
+```
+
+| Field | Description |
+|---|---|
+| `verify_file` | Certificate Authority (CA) file used to verify connecting peers |
+| `certificate_chain_file` | Certificate file sent to other federates/brokers |
+| `private_key_file` | Private key matching the certificate |
+| `tmp_dh_file` | Optional Diffie-Hellman parameters file |
+| `password` | Password to decrypt the private key file |
+
+### Mixing encrypted and unencrypted federates
+
+Use the [multi-protocol broker](/advanced/broker-hierarchies) to bridge encrypted and unencrypted connections simultaneously:
+
+```json
+{
+  "master": {
+    "core_type": "test"
+  },
+  "comms": [
+    {
+      "core_type": "tcp_ss",
+      "local_port": 30000,
+      "encrypted": true,
+      "encryption_config": "/path/to/openssl.json"
+    },
+    {
+      "core_type": "tcp_ss",
+      "local_port": 40000
+    }
+  ]
+}
+```
+
+Launch this multi-broker with:
+
+```bash
+helics_broker --type=multi --config=helics_mb_config.json --name=broker1
+```
+
+Federates requiring encryption connect on port 30000; federates without encryption connect on port 40000.
+
+## Environment variables for networking
+
+| Variable | Description |
+|---|---|
+| `HELICS_ENCRYPTION` | Set to `true` to enable encryption without the `--encrypted` flag |
+| `HELICS_ENCRYPTION_CONFIG` | Path to the encryption configuration JSON file |
+| `HELICS_HTTP_PORT` | Override the default HTTP webserver port (43542) |
+| `HELICS_WEBSOCKET_PORT` | Override the default WebSocket server port |
+
+## Debugging connection problems
+
+<Steps>
+  <Step title="Verify basic connectivity without encryption">
+    If encryption is enabled, first disable it by removing `--encrypted` from all components. If the simulation still fails to connect, the problem is in the basic network configuration (wrong IP, wrong port, firewall).
+  </Step>
+  <Step title="Check that the broker is reachable">
+    From the federate machine, test that the broker's port is open:
+    ```bash
+    nc -zv 10.0.0.1 23405
+    ```
+    Or for TCP:
+    ```bash
+    curl -v telnet://10.0.0.1:23405
+    ```
+  </Step>
+  <Step title="Increase log verbosity">
+    Run the broker and federates with `--loglevel=debug` or `--loglevel=trace` to see detailed connection attempts:
+    ```bash
+    helics_broker -f3 --loglevel=trace
+    ```
+  </Step>
+  <Step title="Inspect TLS certificates (if using encryption)">
+    Check what certificate the broker is presenting:
+    ```bash
+    openssl s_client -connect 10.0.0.1:30000 -showcerts
+    ```
+    Compare against the CA file used by federates.
+  </Step>
+</Steps>
+
+For broker hierarchy networking, see the [broker hierarchies guide](/advanced/broker-hierarchies).

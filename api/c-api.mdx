@@ -1,0 +1,434 @@
+---
+title: "HELICS C Shared Library API (helics.h) Reference"
+description: "Reference for the HELICS C API (helics.h): federate creation, publications, inputs, endpoints, filters, time management, and HelicsError handling."
+keywords: ["HELICS", "C API", "helics.h", "FFI", "helicsCreateValueFederate", "shared library", "ABI"]
+---
+
+The HELICS C shared library API is exposed through a single header, `helics.h`, which wraps the entire functionality of HELICS in a stable C ABI. It is the primary interface used by all language bindings (Python, Julia, Java, MATLAB, C#) and is the authoritative driver of HELICS versioning decisions. Any change to the C API is considered a versioning event.
+
+The C API uses opaque handle types (`HelicsFederate`, `HelicsPublication`, `HelicsInput`, `HelicsEndpoint`, etc.) for all objects. Memory lifetime is managed through explicit create/free pairs, and errors are communicated through a `HelicsError` output parameter rather than exceptions.
+
+## Why use the C API
+
+The C API is useful in the following scenarios:
+
+- **Foreign Function Interface (FFI)**: Language bindings for Python, Julia, MATLAB, Java, C#, and Nim all wrap this API. Building a new binding starts here.
+- **Stable ABI**: The C ABI does not change in ways that require recompilation of consumer code within a major version. This makes it suitable for distributing pre-built shared libraries.
+- **Mixed-language processes**: When a co-simulation binary is built from multiple languages or compiled independently, the C shared library provides a single well-defined boundary.
+- **Embedding in other runtimes**: Simulink, LabVIEW, and similar environments can load shared libraries and call C functions directly.
+
+## Error handling
+
+Every function that can fail accepts a `HelicsError*` as its last argument. The `HelicsError` struct carries an integer error code and a descriptive string:
+
+```c
+#include "helics/helics.h"
+
+HelicsError err = helicsErrorInitialize();
+
+HelicsFederate fed = helicsCreateValueFederate("myFed", fedInfo, &err);
+if (err.error_code != HELICS_OK) {
+    fprintf(stderr, "HELICS error %d: %s\n", err.error_code, err.message);
+    helicsCloseLibrary();
+    return 1;
+}
+
+// Reset error state for the next call
+helicsErrorClear(&err);
+```
+
+Passing `NULL` as the error pointer causes the library to ignore errors silently. Always initialize the struct with `helicsErrorInitialize()` before use.
+
+## Function categories
+
+<AccordionGroup>
+  <Accordion title="Library and utility functions">
+
+```c
+// Get the HELICS version string
+const char* helicsGetVersion(void);
+
+// Get build flags and compiler version
+const char* helicsGetBuildFlags(void);
+const char* helicsGetCompilerVersion(void);
+
+// Check if a core type is available in this build
+HelicsBool helicsIsCoreTypeAvailable(const char* type);
+
+// Abort all activity and terminate
+void helicsAbort(int errorCode, const char* errorString);
+
+// Shut down the library (call after all federates are finalized)
+void helicsCloseLibrary(void);
+void helicsCleanupLibrary(void);
+```
+
+  </Accordion>
+  <Accordion title="Broker and core creation">
+
+```c
+// Create a broker
+HelicsBroker helicsCreateBroker(const char* type,
+                                const char* name,
+                                const char* initString,
+                                HelicsError* err);
+
+// Create a core
+HelicsCore helicsCreateCore(const char* type,
+                            const char* name,
+                            const char* initString,
+                            HelicsError* err);
+
+// Free broker and core objects
+void helicsBrokerFree(HelicsBroker broker);
+void helicsCoreFree(HelicsCore core);
+
+// Disconnect and destroy
+void helicsBrokerDisconnect(HelicsBroker broker, HelicsError* err);
+void helicsCoreDisconnect(HelicsCore core, HelicsError* err);
+```
+
+  </Accordion>
+  <Accordion title="FederateInfo configuration">
+
+```c
+// Create and free a FederateInfo object
+HelicsFederateInfo helicsCreateFederateInfo(void);
+void helicsFederateInfoFree(HelicsFederateInfo fedInfo);
+
+// Configure the info object
+void helicsFederateInfoSetCoreName(HelicsFederateInfo fedInfo,
+                                   const char* corename,
+                                   HelicsError* err);
+void helicsFederateInfoSetCoreTypeFromString(HelicsFederateInfo fedInfo,
+                                             const char* coretype,
+                                             HelicsError* err);
+void helicsFederateInfoSetBroker(HelicsFederateInfo fedInfo,
+                                 const char* broker,
+                                 HelicsError* err);
+void helicsFederateInfoSetBrokerPort(HelicsFederateInfo fedInfo,
+                                     int brokerPort,
+                                     HelicsError* err);
+void helicsFederateInfoSetTimeProperty(HelicsFederateInfo fedInfo,
+                                       int timeProperty,
+                                       HelicsTime propertyValue,
+                                       HelicsError* err);
+void helicsFederateInfoSetIntegerProperty(HelicsFederateInfo fedInfo,
+                                          int intProperty,
+                                          int propertyValue,
+                                          HelicsError* err);
+void helicsFederateInfoSetFlagOption(HelicsFederateInfo fedInfo,
+                                     int flag,
+                                     HelicsBool flagValue,
+                                     HelicsError* err);
+```
+
+  </Accordion>
+</AccordionGroup>
+
+## Key function signatures
+
+### Federate creation
+
+```c
+// Create a value federate from a FederateInfo object
+HelicsFederate helicsCreateValueFederate(const char* fedName,
+                                         HelicsFederateInfo fedInfo,
+                                         HelicsError* err);
+
+// Create from a JSON/TOML config file or JSON string
+HelicsFederate helicsCreateValueFederateFromConfig(const char* configFile,
+                                                   HelicsError* err);
+
+// Create a message federate
+HelicsFederate helicsCreateMessageFederate(const char* fedName,
+                                           HelicsFederateInfo fedInfo,
+                                           HelicsError* err);
+
+HelicsFederate helicsCreateMessageFederateFromConfig(const char* configFile,
+                                                     HelicsError* err);
+
+// Create a combination federate (value + message)
+HelicsFederate helicsCreateCombinationFederate(const char* fedName,
+                                               HelicsFederateInfo fedInfo,
+                                               HelicsError* err);
+
+HelicsFederate helicsCreateCombinationFederateFromConfig(const char* configFile,
+                                                         HelicsError* err);
+```
+
+### Publications
+
+```c
+// Register a global publication with a type code
+HelicsPublication helicsFederateRegisterGlobalPublication(
+    HelicsFederate fed,
+    const char* key,
+    HelicsDataTypes type,
+    const char* units,
+    HelicsError* err);
+
+// Register a federate-scoped publication
+HelicsPublication helicsFederateRegisterPublication(
+    HelicsFederate fed,
+    const char* key,
+    HelicsDataTypes type,
+    const char* units,
+    HelicsError* err);
+
+// Publish typed values
+void helicsPublicationPublishDouble(HelicsPublication pub,
+                                    double val,
+                                    HelicsError* err);
+
+void helicsPublicationPublishInteger(HelicsPublication pub,
+                                     int64_t val,
+                                     HelicsError* err);
+
+void helicsPublicationPublishString(HelicsPublication pub,
+                                    const char* val,
+                                    HelicsError* err);
+
+void helicsPublicationPublishBoolean(HelicsPublication pub,
+                                     HelicsBool val,
+                                     HelicsError* err);
+
+void helicsPublicationPublishVector(HelicsPublication pub,
+                                    const double* vectorInput,
+                                    int vectorLength,
+                                    HelicsError* err);
+
+void helicsPublicationPublishComplex(HelicsPublication pub,
+                                     double real,
+                                     double imag,
+                                     HelicsError* err);
+```
+
+### Subscriptions and inputs
+
+```c
+// Register a subscription (unnamed input targeting a global publication)
+HelicsInput helicsFederateRegisterSubscription(HelicsFederate fed,
+                                               const char* key,
+                                               const char* units,
+                                               HelicsError* err);
+
+// Register a named input
+HelicsInput helicsFederateRegisterInput(HelicsFederate fed,
+                                        const char* key,
+                                        HelicsDataTypes type,
+                                        const char* units,
+                                        HelicsError* err);
+
+// Get typed values from an input
+double helicsInputGetDouble(HelicsInput inp, HelicsError* err);
+int64_t helicsInputGetInteger(HelicsInput inp, HelicsError* err);
+const char* helicsInputGetString(HelicsInput inp, HelicsError* err);
+HelicsBool helicsInputGetBoolean(HelicsInput inp, HelicsError* err);
+
+// Check for updates and get update time
+HelicsBool helicsInputIsUpdated(HelicsInput inp);
+HelicsTime helicsInputLastUpdateTime(HelicsInput inp);
+void helicsInputClearUpdate(HelicsInput inp);
+```
+
+### Endpoints
+
+```c
+// Register an endpoint (message federate only)
+HelicsEndpoint helicsFederateRegisterEndpoint(HelicsFederate fed,
+                                              const char* name,
+                                              const char* type,
+                                              HelicsError* err);
+
+// Register a globally named endpoint
+HelicsEndpoint helicsFederateRegisterGlobalEndpoint(HelicsFederate fed,
+                                                    const char* name,
+                                                    const char* type,
+                                                    HelicsError* err);
+
+// Send messages
+void helicsEndpointSendBytes(HelicsEndpoint endpoint,
+                             const void* data,
+                             int inputDataLength,
+                             HelicsError* err);
+
+void helicsEndpointSendBytesTo(HelicsEndpoint endpoint,
+                                const void* data,
+                                int inputDataLength,
+                                const char* dst,
+                                HelicsError* err);
+
+// Receive messages
+HelicsBool helicsEndpointHasMessage(HelicsEndpoint endpoint);
+HelicsMessage helicsEndpointGetMessage(HelicsEndpoint endpoint);
+```
+
+### Filters
+
+```c
+// Register source filter on a federate
+HelicsFilter helicsFederateRegisterFilter(HelicsFederate fed,
+                                          HelicsFilterTypes type,
+                                          const char* name,
+                                          HelicsError* err);
+
+// Register a global filter
+HelicsFilter helicsFederateRegisterGlobalFilter(HelicsFederate fed,
+                                                HelicsFilterTypes type,
+                                                const char* name,
+                                                HelicsError* err);
+
+// Set filter properties
+void helicsFilterSet(HelicsFilter filt,
+                     const char* prop,
+                     double val,
+                     HelicsError* err);
+
+void helicsFilterSetString(HelicsFilter filt,
+                           const char* prop,
+                           const char* val,
+                           HelicsError* err);
+```
+
+### Time management
+
+```c
+// Enter initialization mode (blocks until all federates ready)
+void helicsFederateEnterInitializingMode(HelicsFederate fed, HelicsError* err);
+
+// Enter executing mode (blocks until all federates ready)
+void helicsFederateEnterExecutingMode(HelicsFederate fed, HelicsError* err);
+
+// Request time advancement; returns the granted time
+HelicsTime helicsFederateRequestTime(HelicsFederate fed,
+                                     HelicsTime requestTime,
+                                     HelicsError* err);
+
+// Get current granted time
+HelicsTime helicsFederateGetCurrentTime(HelicsFederate fed, HelicsError* err);
+
+// Finalize the federate
+void helicsFederateFinalize(HelicsFederate fed, HelicsError* err);
+
+// Free the federate object
+void helicsFederateFree(HelicsFederate fed);
+```
+
+### Queries
+
+```c
+// Create a query object
+HelicsQuery helicsCreateQuery(const char* target,
+                              const char* query);
+
+// Execute the query synchronously
+const char* helicsQueryExecute(HelicsQuery query,
+                               HelicsFederate fed,
+                               HelicsError* err);
+
+// Execute against a broker or core
+const char* helicsQueryBrokerExecute(HelicsQuery query,
+                                     HelicsBroker broker,
+                                     HelicsError* err);
+const char* helicsQueryCoreExecute(HelicsQuery query,
+                                   HelicsCore core,
+                                   HelicsError* err);
+
+// Free the query
+void helicsQueryFree(HelicsQuery query);
+```
+
+## Complete C example
+
+The following example shows a minimal producer federate written entirely in C:
+
+```c
+#include <stdio.h>
+#include "helics/helics.h"
+
+int main(void) {
+    HelicsError err = helicsErrorInitialize();
+
+    /* Configure the federate */
+    HelicsFederateInfo fedInfo = helicsCreateFederateInfo();
+    helicsFederateInfoSetCoreTypeFromString(fedInfo, "zmq", &err);
+    helicsFederateInfoSetTimeProperty(fedInfo,
+        HELICS_PROPERTY_TIME_DELTA, 1.0, &err);
+
+    /* Create the federate */
+    HelicsFederate fed = helicsCreateValueFederate("producer", fedInfo, &err);
+    helicsFederateInfoFree(fedInfo);
+
+    if (err.error_code != HELICS_OK) {
+        fprintf(stderr, "Error: %s\n", err.message);
+        return 1;
+    }
+
+    /* Register a global publication */
+    HelicsPublication pub = helicsFederateRegisterGlobalPublication(
+        fed, "voltage", HELICS_DATA_TYPE_DOUBLE, "kV", &err);
+
+    /* Enter co-simulation */
+    helicsFederateEnterExecutingMode(fed, &err);
+
+    double stopTime = 10.0;
+    HelicsTime currentTime = 0.0;
+
+    while (currentTime < stopTime) {
+        currentTime = helicsFederateRequestTime(fed, currentTime + 1.0, &err);
+        helicsPublicationPublishDouble(pub, 12.47 + currentTime * 0.01, &err);
+    }
+
+    helicsFederateFinalize(fed, &err);
+    helicsFederateFree(fed);
+    helicsCloseLibrary();
+    return 0;
+}
+```
+
+## Data types
+
+The `HelicsDataTypes` enum defines the supported value types:
+
+| Constant | Description |
+|---|---|
+| `HELICS_DATA_TYPE_STRING` | UTF-8 string |
+| `HELICS_DATA_TYPE_DOUBLE` | 64-bit float |
+| `HELICS_DATA_TYPE_INT` | 64-bit signed integer |
+| `HELICS_DATA_TYPE_COMPLEX` | Complex number (real + imag pair) |
+| `HELICS_DATA_TYPE_VECTOR` | Array of doubles |
+| `HELICS_DATA_TYPE_COMPLEX_VECTOR` | Array of complex values |
+| `HELICS_DATA_TYPE_NAMED_POINT` | Named string + double pair |
+| `HELICS_DATA_TYPE_BOOLEAN` | Boolean value |
+| `HELICS_DATA_TYPE_TIME` | HELICS time value |
+| `HELICS_DATA_TYPE_JSON` | Raw JSON string |
+| `HELICS_DATA_TYPE_RAW` | Raw byte buffer |
+| `HELICS_DATA_TYPE_ANY` | Type-agnostic (no conversion) |
+
+## Filter types
+
+| Constant | Description |
+|---|---|
+| `HELICS_FILTER_TYPE_DELAY` | Add a fixed time delay to messages |
+| `HELICS_FILTER_TYPE_RANDOM_DELAY` | Add a random delay to messages |
+| `HELICS_FILTER_TYPE_RANDOM_DROP` | Randomly drop messages |
+| `HELICS_FILTER_TYPE_REROUTE` | Send messages to a different destination |
+| `HELICS_FILTER_TYPE_CLONE` | Duplicate messages to additional destinations |
+| `HELICS_FILTER_TYPE_FIREWALL` | Block messages based on time or content |
+| `HELICS_FILTER_TYPE_CUSTOM` | User-defined filter with a callback |
+
+<CardGroup cols={2}>
+  <Card title="C++ API" icon="code" href="/api/cpp-api">
+    Higher-level object-oriented C++ API
+  </Card>
+  <Card title="Language Bindings" icon="layers" href="/api/language-bindings">
+    Python, Julia, Java, MATLAB wrappers over this API
+  </Card>
+  <Card title="Configuration Options" icon="sliders" href="/api/configuration-options">
+    JSON configuration file reference for federates
+  </Card>
+  <Card title="REST Queries" icon="server" href="/api/rest-queries">
+    Webserver query API for federation introspection
+  </Card>
+</CardGroup>

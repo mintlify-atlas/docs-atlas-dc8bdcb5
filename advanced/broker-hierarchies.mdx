@@ -1,0 +1,235 @@
+---
+title: 'HELICS Broker Hierarchies for Multi-Machine Federations'
+description: 'Configure root and sub-broker topologies to reduce network latency and scale HELICS co-simulations efficiently across multiple compute nodes.'
+keywords: ['broker hierarchy', 'sub-broker', 'multi-machine', 'root broker', 'broker server', 'co-simulation scaling']
+---
+
+When a HELICS co-simulation grows beyond a single compute node, message routing between federates that are physically distant from the broker becomes a bottleneck. A single broker handling all traffic for federates spread across many machines means every message must travel to a potentially remote host and back, adding latency to every time-step. Broker hierarchies solve this problem by placing a local broker on each compute node so federates can exchange messages with low latency, while the root broker at the top of the hierarchy handles only the traffic that must cross node boundaries.
+
+## Why use multiple brokers
+
+Brokers are responsible for routing messages between federates. As the federation grows and spans multiple machines, the load on the broker and the cost of network round-trips both increase. The worst case arises when two federates on the same node must exchange values but both have a high-latency connection to a distant root broker—their communication is slowed for every single message.
+
+The solution is to place a broker on (or near) each compute node. Federates that communicate frequently are co-located and assigned to the same local broker. Messages between co-located federates stay on the local node. Messages that must cross node boundaries travel up the broker hierarchy to a parent broker, which routes them down to the correct sub-broker and on to the destination federate.
+
+<Note>
+For small co-simulations where all federates run on a single machine, a single broker is sufficient. Broker hierarchies are most beneficial when federates are deployed across multiple compute nodes.
+</Note>
+
+## Root broker and sub-broker topology
+
+A broker hierarchy consists of:
+
+- **Root broker** — the broker at the top of the hierarchy. It is the broker of last resort and can route messages to any federate in the entire federation. It has no parent broker.
+- **Sub-brokers** — brokers that connect upward to a parent broker (or the root broker) and downward to federates or further sub-brokers. They route local traffic themselves and pass unresolvable messages up the hierarchy.
+
+The following example topology illustrates a transmission system co-simulation with distribution systems and EV controllers. EV controllers and distribution system federates interact frequently and share a local broker; the distribution system federates and the transmission system federate interact frequently via a parent broker.
+
+```
+Root Broker C (Transmission node, 127.0.0.127)
+├── Sub-Broker A (Distribution node A, 127.0.0.1) — 200 federates
+│   ├── DistributionSystemA federate
+│   └── EV Controller federates (Group A)
+└── Sub-Broker B (Distribution node B) — 200 federates
+    ├── DistributionSystemB federate
+    └── EV Controller federates (Group B)
+    TransmissionGenerationSystem federate (connects directly to root)
+```
+
+## Configuring a broker hierarchy
+
+Each component in a hierarchy needs to know the address of its parent broker, and the root broker needs to know how many sub-brokers and federates to expect.
+
+### Federate configuration
+
+Federates must point to their local sub-broker. Use `coreInit` in a JSON configuration file:
+
+```json
+{
+  "name": "DistributionSystemA",
+  "coreInit": "--broker_address=tcp://127.0.0.1"
+}
+```
+
+For the transmission federate that connects directly to the root broker:
+
+```json
+{
+  "name": "TransmissionGenerationSystem",
+  "coreInit": "--broker_address=tcp://127.0.0.127"
+}
+```
+
+### Sub-broker launch
+
+A sub-broker must declare how many federates it expects (`-f`) and supply the `--broker_address` of its parent (the root broker):
+
+```bash
+helics_broker -f200 --broker_address=tcp://127.0.0.127
+```
+
+### Root broker launch
+
+The root broker specifies how many direct federates (`-f`) and how many sub-brokers (`--sub_brokers`) are expected to connect. It does not supply a `--broker_address` because it has no parent:
+
+```bash
+helics_broker -f1 --sub_brokers=2
+```
+
+## Port configuration for complex networks
+
+In environments with firewalls or strict networking policies, you may need to specify explicit port numbers. There are two ways to add a port:
+
+1. Append `:<port>` to the IP address in `broker_address`, for example `tcp://127.0.0.1:23405`.
+2. Use the dedicated options `--broker_port` and `--local_port`.
+
+| Option | Purpose |
+|---|---|
+| `broker_address` | IP (and optionally port) of the parent broker to connect to |
+| `broker_port` | Port number on the parent broker to connect to |
+| `local_port` | Port on which this component listens for incoming connections |
+| `local_interface` | IP address and/or socket this component listens on |
+
+### Example with explicit ports
+
+Federate connecting to sub-broker A on port 25000, and advertising itself on port 23500:
+
+```json
+{
+  "name": "DistributionSystemA",
+  "coreInit": "--broker_address=tcp://127.0.0.1:25000",
+  "local_port": 23500
+}
+```
+
+Sub-broker A connecting to the root broker on port 24000 and listening on port 25000:
+
+```bash
+helics_broker -f200 --broker_address=tcp://127.0.0.127:24000 --local_port=25000
+```
+
+Sub-broker B with the same root broker port, using a different local port:
+
+```bash
+helics_broker -f200 --broker_address=tcp://127.0.0.127:24000 --local_port=27000
+```
+
+Root broker C listening on port 24000:
+
+```bash
+helics_broker -f1 --sub_brokers=2 --local_port=24000
+```
+
+Transmission federate pointing at the root broker's port:
+
+```json
+{
+  "name": "TransmissionGenerationSystem",
+  "coreInit": "--broker_address=tcp://127.0.0.127:24000"
+}
+```
+
+## Multi-machine setup
+
+For federates running on separate physical machines, each federate must be told where to find its broker using a routable IP address. The broker must also open an external-facing port by passing the `--ipv4` flag:
+
+<Steps>
+  <Step title="Start the root broker on the broker machine">
+    ```bash
+    helics_broker -f1 --sub_brokers=2 --ipv4 --local_port=24000
+    ```
+    The `--ipv4` flag opens ports on all external IPv4 interfaces so remote machines can connect.
+  </Step>
+  <Step title="Start sub-brokers on each compute node">
+    Each sub-broker points to the root broker's routable IP address:
+    ```bash
+    helics_broker -f200 --broker_address=tcp://10.0.0.1:24000 --local_port=25000
+    ```
+  </Step>
+  <Step title="Configure federates with broker_address">
+    Each federate's JSON configuration specifies the IP of its local sub-broker:
+    ```json
+    {
+      "name": "DistributionSystemA",
+      "coreInit": "--broker_address=tcp://10.0.0.2:25000"
+    }
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+For complex networking environments with strict firewall rules, prefer the `tcp_ss` core type over the default `zmq` core. It uses a single socket per connection rather than many ports, which simplifies firewall configuration. See the [networking guide](/advanced/networking) for details.
+</Tip>
+
+## Running simultaneous co-simulations with BrokerServer
+
+If multiple independent co-simulations need to run on the same machine at the same time, each co-simulation needs its own broker on separate ports. The `helics_broker_server` automates this by dynamically assigning brokers and ports on demand.
+
+```bash
+# Start a broker server supporting ZMQ and TCP connections for 24 hours
+helics_broker_server --zmq --tcp --duration=24hours
+```
+
+Multiple protocol types can be combined in one server invocation. The server uses the default ports for each type and assigns each new co-simulation a broker on a separate port automatically.
+
+To control which interface and port the broker server uses, supply a JSON configuration file:
+
+```json
+{
+  "zmq": {
+    "interface": "tcp://127.0.0.1"
+  },
+  "tcp": {
+    "interface": "127.0.0.1",
+    "port": 9568
+  }
+}
+```
+
+```bash
+helics_broker_server --zmq --duration=24hours --config=broker_config.json
+```
+
+### Isolating co-simulations with keys
+
+When multiple users share a machine, a broker key prevents accidental cross-talk between independent federations:
+
+```bash
+helics_broker --type=zmq --key=my_broker_key
+```
+
+Federates must supply the same key in their configuration. The rule is that both the federate and broker must provide no key, or the same key.
+
+<Warning>
+A broker key is not a cryptographic secret—it is a plain string used to prevent accidental connection to the wrong broker, not to enforce security. For encrypted communication, see the [networking guide](/advanced/networking).
+</Warning>
+
+## Example: launching a root broker and sub-broker
+
+The following walkthrough shows the minimal launch sequence for a two-level hierarchy with one sub-broker:
+
+<Steps>
+  <Step title="Launch the root broker">
+    The root broker expects one direct federate and one sub-broker:
+    ```bash
+    helics_broker -f1 --sub_brokers=1 --name=root_broker &
+    ```
+  </Step>
+  <Step title="Launch the sub-broker">
+    The sub-broker expects 5 federates and connects to the root broker:
+    ```bash
+    helics_broker -f5 --broker_address=tcp://127.0.0.1 --name=sub_broker_a &
+    ```
+  </Step>
+  <Step title="Launch federates">
+    Federates connect to the sub-broker:
+    ```json
+    {
+      "name": "MyFederate",
+      "coreInit": "--broker_address=tcp://127.0.0.1 --broker=sub_broker_a"
+    }
+    ```
+  </Step>
+</Steps>
+
+A full working example with source code is available in the [HELICS Examples repository](https://github.com/GMLC-TDC/HELICS-Examples/tree/main/user_guide_examples/advanced/advanced_brokers/hierarchies).

@@ -1,133 +1,72 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
-icon: 'star'
+title: "HELICS: High-Performance Co-Simulation Framework"
+description: "HELICS enables multiple domain-specific simulators to exchange data and synchronize in time — from two federates on a laptop to 100,000+ on supercomputers."
 ---
 
-## Setting up
+HELICS (Hierarchical Engine for Large-scale Infrastructure Co-Simulation) is a general-purpose, modular co-simulation framework that lets you connect existing simulation tools into a unified federation. Rather than building monolithic simulators, HELICS coordinates data exchange and time synchronization between independent simulation tools — each called a **federate** — so they collectively model complex systems of systems.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Learn what HELICS is, how it works, and when to use it.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Installation" icon="download" href="/installation/index">
+    Install HELICS via package managers, pre-compiled binaries, or from source.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build and run your first two-federate co-simulation in minutes.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Core Concepts" icon="lightbulb" href="/concepts/co-simulation-overview">
+    Understand federates, brokers, timing, and data interfaces.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Why HELICS?
 
-Everything you need to create world-class documentation.
+HELICS solves the hard problems of co-simulation: keeping heterogeneous simulators synchronized in time, routing data between them efficiently, and scaling from a developer laptop to a national lab supercomputer — without modifying the simulators themselves.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={3}>
+  <Card title="Multi-language" icon="code">
+    C++, C, Python, Java, MATLAB, Julia, Octave, and more.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Massively scalable" icon="server">
+    Two federates to 100,000+ across distributed computing environments.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="Domain-agnostic" icon="globe">
+    Energy, communications, buildings, transportation, and beyond.
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+</CardGroup>
 
-## Make your content agent ready
+## Explore the documentation
 
-Make your docs work for humans and AI agents alike.
+<CardGroup cols={2}>
+  <Card title="Simulator integration guide" icon="plug" href="/guides/simulator-integration">
+    Step-by-step guidance for connecting your simulation tool to HELICS.
+  </Card>
+  <Card title="Federation configuration" icon="sliders" href="/guides/configuration">
+    Configure federates with JSON files, command-line flags, or direct API calls.
+  </Card>
+  <Card title="HELICS apps" icon="terminal" href="/apps/overview">
+    Use the Broker, Player, Recorder, and other built-in helper applications.
+  </Card>
+  <Card title="C++ API reference" icon="brackets-curly" href="/api/cpp-api">
+    Browse the full public API surface for the C++ application library.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Prompt component"
-    icon="robot"
-    href="/agent-ready/prompt"
-  >
-    Embed shareable AI prompts readers can copy or open in Cursor.
-  </Card>
-  <Card
-    title="Visibility"
-    icon="eye"
-    href="/agent-ready/visibility"
-  >
-    Show different content to humans and agents reading your docs.
-  </Card>
-  <Card
-    title="Contextual menu"
-    icon="bolt"
-    href="/agent-ready/contextual"
-  >
-    Give readers one-click access to Claude, ChatGPT, Cursor, and more.
-  </Card>
-  <Card
-    title="AI coding tools"
-    icon="wand-magic-sparkles"
-    href="/ai-tools/claude-code"
-  >
-    Set up Claude Code, Cursor, or Windsurf with Mintlify's skill.
-  </Card>
-</Columns>
+## Get started in 3 steps
 
-## Need inspiration?
+<Steps>
+  <Step title="Install HELICS">
+    Use conda, pip, or a pre-built package for your platform. See [Installation](/installation/index).
+  </Step>
+  <Step title="Define your federation">
+    Create JSON configuration files for each federate, specifying publications, subscriptions, and timing. See [Configuration](/guides/configuration).
+  </Step>
+  <Step title="Run the co-simulation">
+    Launch a broker and your federates. HELICS handles time synchronization and data routing automatically. See [Quickstart](/quickstart).
+  </Step>
+</Steps>
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Note>
+  HELICS is developed by the Grid Modernization Laboratory Consortium (GMLC) with support from the U.S. Department of Energy. It is open source under the BSD-3-Clause license.
+</Note>

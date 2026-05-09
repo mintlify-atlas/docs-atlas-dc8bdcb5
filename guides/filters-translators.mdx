@@ -1,0 +1,265 @@
+---
+title: 'Using Filters and Translators in HELICS Federations'
+description: 'How to use HELICS filters to model communication effects on messages, and translators to bridge value and message interfaces in a federation.'
+keywords: ['HELICS', 'filters', 'translators', 'message delay', 'random drop', 'reroute', 'clone', 'value interface', 'message interface']
+---
+
+HELICS distinguishes between two fundamentally different kinds of data exchange: **values** (physical quantities like voltage or speed) and **messages** (directed, unique packets like control signals or sensor readings). Filters and translators are specialized HELICS features that work with the message layer—filters modify messages in transit, and translators bridge the gap between the value and message interfaces.
+
+## Filters
+
+Filters model communication system effects on messages traveling between endpoints. Because messages pass through a generic communication layer inside HELICS, that layer can simulate realistic behaviors: a message might be delayed by network latency, randomly dropped due to packet loss, or rerouted to an alternate destination. Values (publications and subscriptions) do not pass through this communication layer and cannot be filtered.
+
+Filters are associated with **endpoints** and can be applied as:
+- **Source filters** — applied to messages sent _from_ an endpoint, before they reach their destination.
+- **Destination filters** — applied to messages arriving _at_ an endpoint, before the federate sees them.
+
+Multiple source filters can be chained on a single endpoint. At most one non-cloning destination filter can be attached to an endpoint at a time.
+
+<Note>
+  Filters do not need to be defined on the same core or federate as the endpoints they target. They can be defined anywhere in the federation, and HELICS will automatically route all affected messages through them.
+</Note>
+
+### Built-in filter types
+
+<AccordionGroup>
+  <Accordion title="delay — Fixed message delay">
+    Delays every message passing through the filter by a fixed amount of time. Use this to model deterministic network latency.
+
+    ```json
+    {
+        "name": "network_delay",
+        "source_targets": "feeder/control_ep",
+        "operation": "delay",
+        "properties": {
+            "name": "delay",
+            "value": "76 ms"
+        }
+    }
+    ```
+
+    Time values can be expressed as strings with units (e.g., `"76 ms"`, `"2 s"`) or as bare numbers in seconds.
+  </Accordion>
+
+  <Accordion title="randomdelay — Probabilistic message delay">
+    Delays messages by a random amount drawn from a configurable statistical distribution. The available distributions match those in the C++ `<random>` library, including `uniform`, `normal`, `exponential`, `lognormal`, and many others.
+
+    ```json
+    {
+        "name": "variable_latency",
+        "source_targets": "sensor/data_ep",
+        "operation": "randomdelay",
+        "properties": [
+            { "name": "distribution", "value": "normal" },
+            { "name": "mean", "value": 0.05 },
+            { "name": "stddev", "value": 0.01 }
+        ]
+    }
+    ```
+
+    For a `uniform` distribution, use `min` and `max` as parameter names. For `exponential`, use `lambda`.
+  </Accordion>
+
+  <Accordion title="randomdrop — Probabilistic message loss">
+    Randomly drops messages with a specified probability. The drop probability is drawn from a uniform distribution between 0 and 1.
+
+    ```json
+    {
+        "name": "packet_loss",
+        "source_targets": "sensor/telemetry_ep",
+        "operation": "random_drop",
+        "properties": {
+            "name": "prob",
+            "value": 0.05
+        }
+    }
+    ```
+
+    A `prob` of `0.05` means 5% of messages are dropped. A value of `0.0` drops nothing; `1.0` drops everything.
+  </Accordion>
+
+  <Accordion title="reroute — Redirect messages">
+    Sends matching messages to a new destination instead of (or in addition to) their original destination. An optional `condition` property specifies a regular expression; only messages whose destination matches the pattern are rerouted.
+
+    ```json
+    {
+        "name": "traffic_redirect",
+        "source_targets": "controller/out_ep",
+        "operation": "reroute",
+        "properties": [
+            { "name": "newdestination", "value": "backup_controller/in_ep" },
+            { "name": "condition", "value": "primary_controller.*" }
+        ]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="clone — Copy messages to additional destinations">
+    Cloning is not an "operation" in the same sense as the above—it is enabled by setting `"clone": true` on a filter definition. A clone filter copies every matching message and delivers the copy to the endpoints listed in the `delivery` field. The original message is still delivered to its original destination.
+
+    ```json
+    {
+        "name": "monitor_tap",
+        "clone": true,
+        "source_targets": [
+            "feeder_a/status_ep",
+            "feeder_b/status_ep"
+        ],
+        "delivery": "monitoring_system/log_ep"
+    }
+    ```
+
+    Cloning is useful for building monitoring or logging federates that observe message traffic without interfering with the co-simulation.
+  </Accordion>
+
+  <Accordion title="firewall — Block messages by rule">
+    The firewall filter blocks messages based on their content, source, or destination. It is used to enforce communication boundaries in the federation. Consult the HELICS API documentation for the full set of rule syntax options.
+  </Accordion>
+</AccordionGroup>
+
+### Configuring filters in JSON
+
+Filters are defined in the `"filters"` array of a federate's JSON configuration file:
+
+```json
+{
+    "name": "communication_model_fed",
+    "coreType": "zmq",
+    "filters": [
+        {
+            "name": "sensor_delay",
+            "source_targets": "sensor_fed/reading_ep",
+            "operation": "delay",
+            "properties": {
+                "name": "delay",
+                "value": "100 ms"
+            }
+        },
+        {
+            "name": "control_drop",
+            "source_targets": "controller/command_ep",
+            "operation": "random_drop",
+            "properties": {
+                "name": "prob",
+                "value": 0.02
+            }
+        }
+    ]
+}
+```
+
+### Creating filters with the C++ API
+
+Filters can also be created programmatically. Use `helicsFederateRegisterFilter` to create the filter object, then `helicsFilterAddSourceTarget` or `helicsFilterAddDestinationTarget` to associate it with an endpoint:
+
+```cpp
+#include "helics/helics.hpp"
+
+// Create a delay filter on the federate
+auto filter = helicsFederateRegisterFilter(
+    fed,
+    helics::FilterTypes::DELAY,
+    "network_delay"
+);
+
+// Target the endpoint whose outgoing messages should be delayed
+helicsFilterAddSourceTarget(filter, "sensor_fed/reading_ep", &err);
+
+// Set the delay property
+helicsFilterSet(filter, "delay", 0.1, &err);  // 100 ms
+```
+
+In Python:
+
+```python
+filt = h.helicsFederateRegisterFilter(
+    fed,
+    h.HELICS_FILTER_TYPE_DELAY,
+    "network_delay"
+)
+h.helicsFilterAddSourceTarget(filt, "sensor_fed/reading_ep")
+h.helicsFilterSet(filt, "delay", 0.1)
+```
+
+## Translators
+
+Translators bridge the two interface types in HELICS: **value interfaces** (publications, subscriptions, inputs) and **message interfaces** (endpoints). Normally these two interface types cannot communicate directly—a federate publishing a double value cannot send it to a federate that only has an endpoint, and vice versa.
+
+### When to use a translator
+
+- You are working with an existing federation where some federates use value interfaces and others use message interfaces, and you cannot easily change both.
+- You need to connect a legacy federate that only implements one interface type to the rest of a federation that uses the other.
+- You want to pass value data through a communication simulator (which works with message endpoints) to model transmission delays or loss on physical values.
+
+### How translators work
+
+To HELICS, a translator is a specialized internal federate with exactly one input, one publication (output), and one endpoint. It operates as follows:
+
+- A value arriving at the translator's **input** is converted into a message and sent to any targets connected to the translator's **endpoint**.
+- A message arriving at the translator's **endpoint** is converted into a value and published on the translator's **publication**.
+
+There is always a one-nanosecond simulated delay for each translation operation, reflecting the non-instantaneous nature of the conversion.
+
+### Translator types
+
+HELICS provides three translator types:
+
+- **JSON** — The most useful type for typical use cases. The message produced or consumed by the endpoint is a JSON object:
+  ```json
+  { "type": "double", "value": 56.78943 }
+  ```
+  A double value of `56.78943` entering the translator's input produces exactly this JSON on the endpoint. The reverse transformation works symmetrically.
+
+- **Custom** — Calls a user-defined callback function (`helicsTranslatorSetCustomCallback`) to perform the translation. Use when the JSON format is not suitable.
+
+- **Binary** — Rarely useful in practice.
+
+### Configuring a translator in JSON
+
+Translators are defined in the `"translators"` array of any federate's configuration file:
+
+```json
+{
+    "name": "bridge_federate",
+    "coreType": "zmq",
+    "translators": [
+        {
+            "name": "value_to_message_bridge",
+            "type": "JSON",
+            "global": true,
+            "source_target": "physical_sim/bus_voltage",
+            "destination_target": "comm_sim/voltage_ep"
+        }
+    ]
+}
+```
+
+- **`source_target`** — The publication whose values will be converted to messages, or the endpoint whose messages will be converted to values.
+- **`destination_target`** — The input or endpoint that receives the translated output.
+- **`global`** — When `true`, the translator's interfaces are addressed globally, simplifying targeting from other federates.
+
+### Creating a translator via the C++ API
+
+```cpp
+// Register a JSON translator on the federate
+auto translator = helicsFederateRegisterGlobalTranslator(
+    fed,
+    HELICS_TRANSLATOR_TYPE_JSON,
+    "value_to_message_bridge",
+    &err
+);
+
+// Connect the translator input to an existing publication
+helicsTranslatorAddPublicationTarget(translator, "physical_sim/bus_voltage", &err);
+
+// Connect the translator endpoint output to an existing endpoint
+helicsTranslatorAddDestinationEndpoint(translator, "comm_sim/voltage_ep", &err);
+```
+
+<Warning>
+  All federates connected to a translator's output or endpoint receive the translated data. If you need to send translated data to only a subset of federates, use multiple translators—one per target.
+</Warning>
+
+<Tip>
+  If neither the built-in translator types nor a custom callback meet your needs, you can implement a fully custom translator as a regular HELICS federate. Such a federate subscribes to values, converts them, and sends them via endpoints—it just happens to perform data format translation rather than modeling any physical system.
+</Tip>

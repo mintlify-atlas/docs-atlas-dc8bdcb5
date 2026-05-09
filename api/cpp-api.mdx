@@ -1,0 +1,309 @@
+---
+title: "HELICS C++ Application API Reference"
+description: "Reference for the HELICS C++ API: federate classes, publications, inputs, endpoints, filters, translators, CMake integration, and versioning policy."
+keywords: ["HELICS", "C++", "API", "ValueFederate", "MessageFederate", "CombinationFederate", "publications", "subscriptions"]
+---
+
+The HELICS C++ Application API is the primary interface for building co-simulation federates in C++. It provides a high-level object-oriented layer on top of the HELICS core, exposing classes for value-based data exchange, message passing, filtering, and time management. All classes live in the `helics` namespace and are declared in headers under `include/helics/application_api/`.
+
+The public API is defined in [`Public_API.md`](https://github.com/GMLC-TDC/HELICS/blob/main/docs/Public_API.md) and is subject to backwards-compatible stability guarantees across minor versions within a major version. Functions may be marked deprecated between minor versions but will not be removed until the next major version. The C shared library API (`helics.h`) is the primary driver of versioning decisions.
+
+<Note>
+Translators and the global time coordinator option are in Beta and subject to finalization. Vector subscriptions and vector inputs are subject to change. Query data formats may update in minor releases.
+</Note>
+
+## CMake integration
+
+HELICS installs CMake package config files that allow you to link against the C++ API with a few lines:
+
+```cmake
+find_package(HELICS 3 REQUIRED)
+
+add_executable(my_federate main.cpp)
+target_link_libraries(my_federate PRIVATE HELICS::helicscpp)
+```
+
+For the C shared library instead of the C++ API, link against `HELICS::helics`. Both targets export the necessary include directories automatically.
+
+## Public API headers
+
+The following headers form the stable public API. All are installed to `include/helics/application_api/`.
+
+| Header | Purpose |
+|---|---|
+| `ValueFederate.hpp` | Value-based data exchange (publications/inputs) |
+| `MessageFederate.hpp` | Message-based data exchange (endpoints) |
+| `CombinationFederate.hpp` | Combined value and message federate |
+| `CallbackFederate.hpp` | Callback-driven federate (Beta) |
+| `Federate.hpp` | Base federate class with timing and lifecycle |
+| `FederateInfo.hpp` | Federate configuration structure |
+| `Publications.hpp` | Publication object and publish methods |
+| `Inputs.hpp` | Input object and get methods |
+| `Subscriptions.hpp` | Subscription aliases |
+| `Endpoints.hpp` | Endpoint object for message federates |
+| `Filters.hpp` | Filter objects for message manipulation |
+| `Translators.hpp` | Translator objects between value and message interfaces |
+| `BrokerApp.hpp` | Programmatic broker management |
+| `CoreApp.hpp` | Programmatic core management |
+| `queryFunctions.hpp` | Query helper functions |
+| `helicsTypes.hpp` | Type definitions and enumerations |
+
+## Key classes
+
+### `Federate`
+
+`Federate` is the base class for all federate types. It manages the federate lifecycle, time requests, properties, and flags. It is declared in `Federate.hpp`.
+
+<AccordionGroup>
+  <Accordion title="Lifecycle methods">
+
+```cpp
+// Enter initialization mode (blocks until all federates are ready)
+void enterInitializingMode();
+void enterInitializingModeAsync();
+void enterInitializingModeComplete();
+
+// Enter executing mode (blocks until all federates are ready)
+IterationResult enterExecutingMode(
+    IterationRequest iterate = IterationRequest::NO_ITERATIONS);
+void enterExecutingModeAsync(
+    IterationRequest iterate = IterationRequest::NO_ITERATIONS);
+IterationResult enterExecutingModeComplete();
+
+// Terminate and clean up
+void finalize();
+void finalizeAsync();
+void finalizeComplete();
+void disconnect();
+```
+
+  </Accordion>
+  <Accordion title="Time management">
+
+```cpp
+// Request a time advancement; blocks until granted
+Time requestTime(Time nextInternalTimeStep);
+
+// Request next allowed time (uses timeZero)
+Time requestNextStep();
+
+// Advance by a delta from current time
+Time requestTimeAdvance(Time timeDelta);
+
+// Iterative time request
+iteration_time requestTimeIterative(
+    Time nextInternalTimeStep, IterationRequest iterate);
+
+// Async variants
+void requestTimeAsync(Time nextInternalTimeStep);
+Time requestTimeComplete();
+```
+
+  </Accordion>
+  <Accordion title="Properties and flags">
+
+```cpp
+// Set timing properties (period, timeDelta, offset, etc.)
+virtual void setProperty(int32_t option, Time timeValue);
+virtual void setProperty(int32_t option, double timeValue);
+virtual void setProperty(int32_t option, int32_t optionValue);
+
+// Set flags (observer, uninterruptible, source_only, etc.)
+virtual void setFlagOption(int flag, bool flagValue = true);
+
+// Get current time
+Time getCurrentTime() const;
+
+// Error signaling
+void localError(int errorcode, std::string_view message);
+void globalError(int errorcode, std::string_view message);
+```
+
+  </Accordion>
+</AccordionGroup>
+
+### `ValueFederate`
+
+`ValueFederate` extends `Federate` with publication and input registration, enabling time-stamped value exchange between federates. Declared in `ValueFederate.hpp`.
+
+```cpp
+// Register a typed publication (name scoped to federate)
+Publication& registerPublication(std::string_view name,
+                                 std::string_view type,
+                                 std::string_view units = {});
+
+// Template form deduces the type string automatically
+template<typename X>
+Publication& registerPublication(std::string_view name,
+                                 std::string_view units = {});
+
+// Register a globally named publication
+Publication& registerGlobalPublication(std::string_view name,
+                                       std::string_view type,
+                                       std::string_view units = {});
+
+// Register an input
+Input& registerInput(std::string_view name,
+                     std::string_view type,
+                     std::string_view units = {});
+
+// Register a subscription (unnamed input targeting a publication)
+Input& registerSubscription(std::string_view target,
+                            std::string_view units = {});
+
+// Register globally named input
+Input& registerGlobalInput(std::string_view name,
+                           std::string_view type,
+                           std::string_view units = {});
+```
+
+### `MessageFederate`
+
+`MessageFederate` extends `Federate` with endpoint registration for packet-based message exchange. Declared in `MessageFederate.hpp`.
+
+```cpp
+// Register an endpoint
+Endpoint& registerEndpoint(std::string_view name,
+                           std::string_view type = {});
+
+// Register a globally named endpoint
+Endpoint& registerGlobalEndpoint(std::string_view name,
+                                 std::string_view type = {});
+
+// Check for pending messages
+bool hasMessage() const;
+int pendingMessageCount() const;
+
+// Retrieve messages
+Message getMessage();
+```
+
+### `CombinationFederate`
+
+`CombinationFederate` inherits from both `ValueFederate` and `MessageFederate` using virtual inheritance, exposing the full set of both APIs. Use this when a single federate needs to both publish values and send messages. Declared in `CombinationFederate.hpp`.
+
+```cpp
+CombinationFederate(std::string_view fedName, const FederateInfo& fedInfo);
+explicit CombinationFederate(const std::string& configString);
+```
+
+### `CallbackFederate`
+
+`CallbackFederate` is a callback-driven federate where the user registers functions to be called at each time step rather than driving a simulation loop manually. It is declared in `CallbackFederate.hpp` and is considered Beta.
+
+### `Publication`
+
+The `Publication` object is returned by `registerPublication` and is used to send values:
+
+```cpp
+// Publish typed values
+void publish(double val);
+void publish(int64_t val);
+void publish(std::string_view val);
+void publish(const std::vector<double>& val);
+void publish(bool val);
+void publish(Time val);
+// General templated publish
+template<typename X>
+void publish(const X& val);
+```
+
+### `Input`
+
+The `Input` object is returned by `registerInput` / `registerSubscription` and is used to receive values:
+
+```cpp
+// Retrieve values (performs type conversion if needed)
+double getDouble() const;
+int64_t getInteger() const;
+std::string getString() const;
+std::vector<double> getVector() const;
+bool getBoolean() const;
+Time getTime() const;
+// Check if updated since last call
+bool isUpdated() const;
+// Get the time of the last update
+Time lastUpdateTime() const;
+```
+
+### `FederateInfo`
+
+`FederateInfo` holds configuration for a federate before it is created. It can be loaded from a JSON/TOML file or set directly via properties:
+
+```cpp
+FederateInfo fedInfo;
+fedInfo.coreType = CoreType::ZMQ;
+fedInfo.setProperty(HELICS_PROPERTY_TIME_DELTA, 1.0);
+fedInfo.setFlagOption(HELICS_FLAG_UNINTERRUPTIBLE, true);
+
+// Or load from config file
+FederateInfo fedInfo("config.json");
+```
+
+### `BrokerApp` and `CoreApp`
+
+`BrokerApp` and `CoreApp` allow programmatic creation and management of brokers and cores within a C++ process:
+
+```cpp
+// Create a broker for 3 federates using ZMQ
+helics::BrokerApp broker("zmq", "--federates=3");
+
+// Create a core
+helics::CoreApp core("zmq", "--broker=localhost");
+```
+
+## Complete example
+
+```cpp
+#include <helics/application_api/ValueFederate.hpp>
+
+int main() {
+    helics::FederateInfo fedInfo;
+    fedInfo.setProperty(HELICS_PROPERTY_TIME_DELTA, 1.0);
+
+    helics::ValueFederate fed("myFederate", fedInfo);
+
+    // Register interfaces
+    auto& pub = fed.registerGlobalPublication<double>("voltage", "kV");
+    auto& sub = fed.registerSubscription("otherFed/current", "A");
+
+    // Enter co-simulation
+    fed.enterExecutingMode();
+
+    helics::Time currentTime = 0.0;
+    helics::Time stopTime = 100.0;
+
+    while (currentTime < stopTime) {
+        currentTime = fed.requestTime(currentTime + 1.0);
+
+        if (sub.isUpdated()) {
+            double current = sub.getDouble();
+            pub.publish(current * 1.1);
+        }
+    }
+
+    fed.finalize();
+    return 0;
+}
+```
+
+## Versioning and backwards compatibility
+
+HELICS follows semantic versioning. The public C++ API defined in `Public_API.md` is backwards source-compatible across minor versions within a major version (e.g., all 3.x releases). Functions deprecated in one minor version will not be removed until the next major version. The C shared library ABI is the primary versioning driver; the C++ API may require recompilation across releases even when the source interface does not change.
+
+For full, auto-generated API documentation including all method signatures and parameter descriptions, see the [HELICS Doxygen reference](https://docs.helics.org/en/latest/doxygen/).
+
+<CardGroup cols={2}>
+  <Card title="C API Reference" icon="c" href="/api/c-api">
+    Stable C shared library interface for FFI and language interop
+  </Card>
+  <Card title="Language Bindings" icon="code" href="/api/language-bindings">
+    Python, Julia, Java, MATLAB, and more
+  </Card>
+  <Card title="Configuration Options" icon="sliders" href="/api/configuration-options">
+    JSON configuration file reference
+  </Card>
+  <Card title="Doxygen" icon="book-open" href="https://docs.helics.org/en/latest/doxygen/">
+    Auto-generated C++ API documentation
+  </Card>
+</CardGroup>

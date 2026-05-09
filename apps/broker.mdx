@@ -1,0 +1,234 @@
+---
+title: "helics_broker Command-Line Reference and BrokerApp"
+description: "Reference for helics_broker flags, terminal mode, queries, the BrokerServer for dynamic broker creation, and the BrokerApp C++ class for embedded brokers."
+keywords: ["helics broker", "helics_broker", "broker server", "helics broker flags", "broker rest api", "BrokerApp"]
+---
+
+The HELICS broker is the coordination hub of every federation. It routes publications to subscribers, dispatches messages between endpoints, and manages the global time advancement algorithm that keeps all federates synchronized. You can run a broker as a standalone process using the `helics_broker` executable, manage multiple brokers dynamically with `helics_broker_server`, or embed one directly in your C++ application using the `BrokerApp` class.
+
+## Starting a broker
+
+The most common invocation passes `-f` (the minimum number of federates expected) and a log level:
+
+```bash
+helics_broker -f 2 --loglevel=warning
+```
+
+The broker waits until the specified number of federates have connected before allowing the federation to advance into the execution phase. You can also specify a name and core type:
+
+```bash
+helics_broker -f 4 --name=main_broker --type=zmq --loglevel=debug
+```
+
+Open an interactive terminal alongside the broker by passing `term` as the first argument:
+
+```bash
+helics_broker term -f 2 --loglevel=warning
+```
+
+Enable automatic restart on completion (with a 3-second window to cancel with Ctrl-C):
+
+```bash
+helics_broker --autorestart -f 2 --loglevel=warning
+```
+
+## Command-line flags
+
+### General options
+
+<AccordionGroup>
+  <Accordion title="Identity and type">
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--name` | `-n` | Name to assign to this broker |
+| `--type` | `-t` | Core type: `zmq` (default), `ipc`, `tcp`, `udp`, `mpi`, `test` |
+| `--root` | | Declare this broker as a root broker |
+| `--identifier` | | Alternative way to set the broker name |
+
+  </Accordion>
+  <Accordion title="Federation size and timing">
+
+| Flag | Description |
+|------|-------------|
+| `--federates` / `--minfed` | Minimum number of federates that must connect before execution starts |
+| `--minbrokers` | Minimum number of sub-brokers or cores that must connect |
+| `--maxiter` | Maximum number of allowed time iterations |
+| `--tick` | Heartbeat interval in milliseconds (also accepts `10s`, `45ms`). After two missed ticks secondary actions are taken |
+| `--timeout` | Time to wait for a broker connection (milliseconds or time string) |
+| `--error_timeout` | Time to wait before disconnecting after an error |
+
+  </Accordion>
+  <Accordion title="Logging">
+
+| Flag | Description |
+|------|-------------|
+| `--loglevel` | Global log level (higher = more output; `-1` disables logging entirely) |
+| `--consoleloglevel` | Log level for console output only |
+| `--fileloglevel` | Log level for file output only |
+| `--logfile` | Path to the log output file |
+| `--dumplog` | Capture all messages and dump a complete log on termination |
+
+  </Accordion>
+  <Accordion title="Error handling">
+
+| Flag | Description |
+|------|-------------|
+| `--terminate_on_error` | Halt the entire co-simulation if any federate reports an error |
+
+  </Accordion>
+</AccordionGroup>
+
+### Network options (ZMQ, TCP, UDP)
+
+<AccordionGroup>
+  <Accordion title="ZMQ and TCP/UDP network flags">
+
+| Flag | Description |
+|------|-------------|
+| `--interface` | Local network interface for receiving connections |
+| `--broker` / `-b` | Address or identifier of a parent broker to connect to |
+| `--broker_address` | Full network address of the parent broker |
+| `--brokername` | Name of the parent broker |
+| `--port` | Port number for the broker |
+| `--brokerport` | Port for the broker priority port |
+| `--localport` | Port for the local receive port |
+| `--portstart` | Starting port for automatic port assignment |
+| `--local` | Bind to the loopback interface (default) |
+| `--ipv4` | Bind to external IPv4 addresses |
+| `--ipv6` | Bind to external IPv6 addresses |
+| `--external` | Bind to all external interfaces |
+
+  </Accordion>
+  <Accordion title="Interprocess (IPC) flags">
+
+| Flag | Description |
+|------|-------------|
+| `--queueloc` | Named location of the shared memory queue |
+| `--brokerinit` | Initialization string for the parent broker |
+
+  </Accordion>
+</AccordionGroup>
+
+## Terminal mode
+
+When started with `term`, the broker opens an interactive prompt where you can inspect and control it while it runs:
+
+```bash
+helics_broker term -f 2
+```
+
+Available terminal commands:
+
+```text
+helics>>help
+`quit`          -> close the terminal and wait for broker to finish
+`terminate`     -> force the broker to stop
+`terminate*`    -> force the broker to stop and exit the application
+`help`, `?`     -> show this help
+`restart`       -> restart a completed broker
+`status`        -> display current broker status
+`info`          -> display broker name, connection state, and address
+`force restart` -> force terminate and immediately restart the broker
+`query` <queryString>         -> query the broker
+`query` <target> <queryString> -> query a specific target
+```
+
+### Status output
+
+The `status` command shows the live count of connected brokers, federates, and handles:
+
+```bash
+helics>>status
+Broker (643204-ibrVd-14EWH-unKfh-hExUP) is connected and is accepting new federates
+{"brokers":0,
+"federates":0,
+"handles":0}
+```
+
+### Info output
+
+The `info` command shows the broker's name, connection status, and bound address:
+
+```bash
+helics>>info
+Broker (643204-ibrVd-14EWH-unKfh-hExUP) is connected and is accepting new federates
+address=tcp://127.0.0.1:23404
+```
+
+## Broker queries
+
+The `query` command (in terminal mode or via the API) returns runtime information about the federation. For example, `query counts` returns the same JSON object as `status`:
+
+```bash
+helics>>query counts
+```
+
+Other useful query strings include `federates`, `brokers`, `publications`, `subscriptions`, `endpoints`, `interfaces`, and `version`. Full documentation of all available queries is in the [Queries reference](/advanced/queries).
+
+## BrokerServer: dynamic broker creation
+
+`helics_broker_server` is a coordinator that creates new brokers on demand rather than requiring you to start one per federation manually. It is currently experimental and works only with ZMQ.
+
+```bash
+helics_broker_server --zmq
+```
+
+You can specify how long the server should run:
+
+```bash
+helics_broker_server --duration "2 hours"
+```
+
+Open a terminal control window alongside the server:
+
+```bash
+helics_broker_server term
+```
+
+### BrokerServer command-line flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--zmq` | `-z` | Start a ZMQ broker server |
+| `--zmqss` | | Start a ZMQ single-socket broker server |
+| `--tcp` | `-t` | Start a TCP broker server |
+| `--udp` | `-u` | Start a UDP broker server |
+| `--mpi` | | Start an MPI broker server |
+| `--duration` | | How long the server should run (default: 30 minutes) |
+| `--quiet` | | Suppress most printed output |
+
+### BrokerServer terminal commands
+
+```text
+helics-broker-server>>help
+`quit`       -> close the terminal and wait for broker server to finish
+`terminate`  -> force the broker server to stop
+`terminate*` -> force the broker server and all existing brokers to terminate
+`help`, `?`  -> show this help
+```
+
+<Note>
+  The broker server is marked experimental as of HELICS 2.2 and only supports ZMQ. Support for TCP, TCPSS, UDP, and MPI is planned for future releases.
+</Note>
+
+## Programmatic broker: BrokerApp C++ class
+
+You can embed a broker directly in your C++ application using the `BrokerApp` class rather than launching a separate process. This is convenient in unit tests or when writing a single-process orchestrator:
+
+```cpp
+#include <helics/apps/BrokerApp.hpp>
+
+// Create a ZMQ broker expecting 3 federates
+helics::apps::BrokerApp broker("zmq", "-f 3 --name=embedded_broker");
+
+// ... run your federation ...
+
+broker.forceTerminate();
+```
+
+The `BrokerApp` constructor accepts the same arguments as `helics_broker`. The object keeps the broker alive for its lifetime and cleans up on destruction.
+
+<Tip>
+  Use `BrokerApp` in test suites to avoid port conflicts and process management overhead. Each test can create its own broker with a unique name and a different port range via `--portstart`.
+</Tip>

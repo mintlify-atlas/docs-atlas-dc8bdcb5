@@ -1,0 +1,84 @@
+---
+title: 'Co-Simulation with HELICS: Concepts and Architecture'
+description: 'How HELICS enables multi-simulator co-simulation via its broker, core, and federate model for time-synchronized, cross-domain data exchange.'
+keywords: ['co-simulation', 'HELICS', 'federation', 'broker', 'federate', 'time synchronization']
+---
+
+Co-simulation is an analysis technique that allows simulators from different domains to interact by exchanging values during the course of a simulation, where each simulator's outputs define the boundary conditions for others. Rather than building a single monolithic model that captures every aspect of a complex system, co-simulation lets you couple existing, well-validated simulators—each specialized in its own domain—into a unified federation that is more realistic and comprehensive than any of them alone. HELICS (Hierarchical Engine for Large-scale Infrastructure Co-Simulation) is an open-source, high-performance co-simulation framework that manages the two fundamental challenges of any co-simulation: keeping all running simulators synchronized in time, and facilitating data exchange between them.
+
+## Why co-simulation?
+
+Real-world infrastructure systems—power grids, communications networks, transportation systems, building controls—interact constantly. A dedicated simulator for any one domain typically treats interactions with other domains as fixed boundary conditions, such as a weather model that assumes a constant ground reflectivity or a power system model that uses a fixed load profile. Co-simulation breaks down these artificial boundaries.
+
+Consider coupling an atmospheric simulator with a vegetation-growth model. In reality, precipitation and temperature shape vegetation, while vegetation in turn influences surface reflectivity and air moisture. Simulating both simultaneously, with each feeding updated values to the other at every time step, produces results that neither model could achieve independently.
+
+Co-simulation also provides natural parallelism. Simulator instances with limited inter-domain coupling—such as vegetation models for Oregon and Texas—can run concurrently, exchanging values only through shared boundary federates. This means the practical limit on co-simulation size is computing resources rather than inherent model complexity.
+
+## The HELICS architecture
+
+HELICS organizes a co-simulation into three layers: **federates**, **cores**, and **brokers**.
+
+```
+┌──────────────────────────────────────────────┐
+│                    Broker                    │
+│  (routes messages across the federation)     │
+│                                              │
+│   ┌────────────┐      ┌────────────┐         │
+│   │   Core A   │      │   Core B   │  ...    │
+│   │            │      │            │         │
+│   │ Federate 1 │      │ Federate 2 │         │
+│   └────────────┘      └────────────┘         │
+└──────────────────────────────────────────────┘
+```
+
+**Federate** — A running instance of a simulator that has been integrated with HELICS. Each federate models a specific portion of the overall system, publishes values or messages, and receives inputs from other federates.
+
+**Core** — The HELICS library embedded inside a simulator that allows it to join a federation. The core manages all communication interfaces (publications, subscriptions, endpoints) for its federate and connects to the broker. In practice, each federate has exactly one core.
+
+**Broker** — A standalone HELICS executable that acts as the central message router for the federation. Every core must register with a broker. The broker collects time requests from all cores, determines the globally safe next time grant, and distributes values and messages to the appropriate destinations. HELICS supports hierarchies of brokers for large-scale distributed simulations, with a root broker at the top.
+
+## Time synchronization
+
+Without coordinated time management, a fast simulator could race ahead days in simulated time while a slower one is still at the start, making any data exchange meaningless. HELICS prevents this through a **time request and grant** mechanism.
+
+Each federate requests the next simulated time it needs to advance to. The HELICS core collects these requests and, once it can guarantee that no other federate will produce outputs that would affect the past, grants each federate the time it requested—or an earlier time if a new input arrives that the federate needs to process. A federate is never asked to simulate a time in the past; every granted time is equal to or later than the previous grant.
+
+This blocking time-request model means that fast simulators naturally wait for slower ones at the points where they exchange data, maintaining a causally consistent global simulation state.
+
+## Data exchange
+
+HELICS supports two fundamentally different kinds of signals, designed to reflect the different natures of real-world interactions:
+
+**Value signals** model physical quantities at the boundary between two simulators—voltages, currents, temperatures, flow rates. They are persistent: once published, a value remains available to any subscribing federate until a new value replaces it. Value signals use publications and subscriptions as their interface types.
+
+**Message signals** model information flowing over a communication channel—control commands, sensor readings, protocol packets. Messages are directed (one sender, one receiver) and consumed on receipt; unlike values, they are not overwritten but queued. Message signals use endpoints as their interface type and can pass through filters that simulate communication-network effects like delay or packet loss.
+
+<Note>
+A co-simulation can mix value and message federates freely. A combination federate participates in both, making it suitable for components that must model both physical behavior and control logic.
+</Note>
+
+## Planning a co-simulation with HELICS
+
+Before integrating a simulator with HELICS, there are four key questions to answer:
+
+1. **What is the nature of the codebase?** Open-source simulators can be modified directly; commercial simulators may only expose an API that a HELICS wrapper calls.
+2. **What programming language will be used?** HELICS provides native APIs for C++ and C, plus bindings for Python, Java, MATLAB, Octave, Julia, Nim, and C#.
+3. **What is the simulator's concept of time?** Fixed time-step simulators, adaptive time-step simulators, and event-driven simulators each integrate with HELICS differently.
+4. **What data will be exchanged?** Identify which outputs become inputs to other federates and whether those signals represent physics (use value federates) or control information (use message federates).
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Federates" icon="circle-nodes" href="/concepts/federates">
+    Understand the types of federates, their lifecycle, and the roles of cores and brokers in a federation.
+  </Card>
+  <Card title="Timing" icon="clock" href="/concepts/timing">
+    Learn how HELICS manages simulation time, time requests, and grants across a federation.
+  </Card>
+  <Card title="Value federates" icon="wave-square" href="/concepts/value-federates">
+    Explore publications, subscriptions, and inputs for exchanging physical values between simulators.
+  </Card>
+  <Card title="Message federates" icon="envelope" href="/concepts/message-federates">
+    Discover how endpoints and filters model communication-network behavior between federates.
+  </Card>
+</CardGroup>

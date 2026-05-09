@@ -1,0 +1,275 @@
+---
+title: 'Message Federates: Endpoints, Messages, and Filters'
+description: 'How HELICS message federates use endpoints to exchange directed messages and filters to simulate communication-network effects in a co-simulation.'
+keywords: ['message federate', 'endpoint', 'filter', 'HELICS', 'helicsFederateRegisterEndpoint', 'helicsEndpointHasMessage', 'targeted endpoint']
+---
+
+Message federates model the flow of information through a co-simulation—control commands, sensor readings, protocol packets, event notifications—rather than the state of a physical quantity. Where value federates use persistent publish/subscribe channels that represent continuous physical connections, message federates use **endpoints** that act as addresses on a communication network. Messages sent between endpoints are directed and unique: each has exactly one sender, one receiver, and a unique identifier inside HELICS. Once a message is received and consumed, it is gone; if the information needs to reach another federate, a new message must be created and sent.
+
+## Endpoints
+
+An endpoint is the interface through which a message federate sends and receives messages. Each endpoint has a name that serves as its address within the federation. A federate can define one or many endpoints depending on how its communication topology should be modeled.
+
+Two common design patterns:
+
+**Dedicated endpoints per channel** — If Federate A always sends voltage measurements to Federate B, and Federate B always sends control commands back, each path can have its own endpoint. The code handling each endpoint knows exactly what kind of data to expect.
+
+**Shared endpoint per network** — In a wireless AMI (automated meter infrastructure) system where many meters communicate with a single data aggregator over a shared radio network, the aggregator might have one endpoint representing its entire radio interface. Messages from any meter arrive at the same endpoint, and the federate must inspect each message's metadata to determine its source.
+
+<Tip>
+Choose your endpoint topology to match the real communication architecture you are modeling. Dedicated endpoints make code simpler and more readable; shared endpoints more accurately represent many-to-one network interfaces.
+</Tip>
+
+## Registering endpoints
+
+<Tabs>
+  <Tab title="C API">
+    ```c
+    #include <helics/helics.h>
+
+    HelicsError err = helicsErrorInitialize();
+
+    // Local endpoint: federation-wide name will be "<federate_name>/<name>"
+    HelicsEndpoint ep = helicsFederateRegisterEndpoint(
+        fed,
+        "voltage_sensor",  // name
+        "double",          // type (user-defined string; HELICS does not enforce it)
+        &err
+    );
+
+    // Global endpoint: the given name is the federation-wide name
+    HelicsEndpoint global_ep = helicsFederateRegisterGlobalEndpoint(
+        fed,
+        "Controller/ep",  // globally unique name
+        "",               // type (may be NULL or empty)
+        &err
+    );
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import helics as h
+
+    # Local endpoint
+    ep = h.helicsFederateRegisterEndpoint(fed, "voltage_sensor", "double")
+
+    # Global endpoint
+    global_ep = h.helicsFederateRegisterGlobalEndpoint(fed, "Controller/ep", "")
+    ```
+  </Tab>
+</Tabs>
+
+### Targeted endpoints
+
+A **targeted endpoint** has a predefined default destination and will only send messages to that destination. It cannot route messages to arbitrary endpoints at runtime. This is useful when the communication path is fixed and you want HELICS to enforce that constraint.
+
+```c
+// Targeted endpoint: destination is fixed
+HelicsEndpoint targeted_ep = helicsFederateRegisterTargetedEndpoint(
+    fed, "sensor_output", "double", &err
+);
+
+// Global targeted endpoint
+HelicsEndpoint global_targeted_ep = helicsFederateRegisterGlobalTargetedEndpoint(
+    fed, "Sensor/output", "double", &err
+);
+```
+
+## JSON configuration for endpoints
+
+Endpoints are declared in the same JSON configuration file as publications and subscriptions:
+
+```json
+{
+  "name": "ControllerFederate",
+  "coreType": "zmq",
+  "period": 60.0,
+  "uninterruptible": false,
+  "endpoints": [
+    {
+      "name": "ControllerFederate/ep",
+      "global": true,
+      "destination": "ActuatorFederate/ep"
+    },
+    {
+      "name": "ControllerFederate/status_ep",
+      "global": true
+    }
+  ]
+}
+```
+
+- **`name`** — The endpoint's identifier. Combined with `global`, this determines the federation-wide address.
+- **`global`** — If `true`, the name is used as-is across the federation. If `false`, the federate name is prepended.
+- **`destination`** — Optional default destination for messages sent from this endpoint. Can be overridden at runtime by specifying a destination in the send call.
+
+## Sending messages
+
+Messages are sent from an endpoint to a destination endpoint by its address string. If a default destination was set during registration, an empty destination string uses that default.
+
+<Tabs>
+  <Tab title="C API">
+    ```c
+    const char* dest = "ActuatorFederate/ep";
+    const char* payload = "voltage_command:230.5";
+    int payload_len = (int)strlen(payload);
+
+    // Send bytes to a specific destination
+    helicsEndpointSendBytesTo(ep, payload, payload_len, dest, &err);
+
+    // Send to the default destination (set during registration or via setDefaultDestination)
+    helicsEndpointSendBytes(ep, payload, payload_len, &err);
+
+    // Send a string message to the default destination
+    helicsEndpointSendString(ep, "command:open_breaker", &err);
+
+    // Send a message with a future delivery time (t=0.5 seconds from now)
+    helicsEndpointSendStringAt(ep, "delayed_command", current_time + 0.5, &err);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import helics as h
+
+    dest = "ActuatorFederate/ep"
+    payload = b"voltage_command:230.5"
+
+    # Send bytes to a specific destination
+    h.helicsEndpointSendBytesTo(ep, payload, dest)
+
+    # Send to the default destination
+    h.helicsEndpointSendBytes(ep, payload)
+
+    # Send a string to the default destination
+    h.helicsEndpointSendString(ep, "command:open_breaker")
+
+    # Stage the message manually with full control
+    msg = h.helicsEndpointCreateMessage(ep)
+    h.helicsMessageSetDestination(msg, dest)
+    h.helicsMessageSetString(msg, "custom_payload")
+    h.helicsMessageSetTime(msg, current_time + 0.5)
+    h.helicsEndpointSendMessage(ep, msg)
+    ```
+  </Tab>
+</Tabs>
+
+## Receiving messages
+
+Unlike subscriptions, which hold a single current value, endpoints maintain a **queue** of received messages. Multiple messages can arrive before a federate processes them. You must drain the queue explicitly.
+
+<Tabs>
+  <Tab title="C API">
+    ```c
+    // Check whether any messages are waiting at this endpoint
+    if (helicsEndpointHasMessage(ep) == HELICS_TRUE) {
+        // Receive one message at a time
+        while (helicsEndpointHasMessage(ep) == HELICS_TRUE) {
+            HelicsMessage msg = helicsEndpointGetMessage(ep);
+
+            // Inspect the message
+            const char* source = helicsMessageGetSource(msg);
+            HelicsTime send_time = helicsMessageGetTime(msg);
+            const char* data = helicsMessageGetString(msg);
+
+            printf("Received from %s at t=%.3f: %s\n", source, send_time, data);
+        }
+    }
+
+    // Alternatively, check across all endpoints on the federate
+    while (helicsFederateHasMessage(fed) == HELICS_TRUE) {
+        HelicsMessage msg = helicsFederateGetMessage(fed);
+        // process msg...
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import helics as h
+
+    # Check a specific endpoint
+    while h.helicsEndpointHasMessage(ep):
+        msg = h.helicsEndpointGetMessage(ep)
+        source = h.helicsMessageGetSource(msg)
+        send_time = h.helicsMessageGetTime(msg)
+        data = h.helicsMessageGetString(msg)
+        print(f"Received from {source} at t={send_time:.3f}: {data}")
+
+    # Or check across all endpoints in the federate
+    while h.helicsFederateHasMessage(fed):
+        msg = h.helicsFederateGetMessage(fed)
+        # process msg...
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+A message is consumed when retrieved via `helicsEndpointGetMessage()`. It exists only in your federate's memory after that point. If the same information must reach multiple federates, you must send separate messages to each destination, or use a cloning filter.
+</Warning>
+
+## How messages differ from values
+
+The table below summarizes the most important distinctions:
+
+| | Values | Messages |
+|---|---|---|
+| Interface | Publication / Subscription / Input | Endpoint |
+| Persistence | Current value always available to subscribers | Consumed on receipt; queue of pending messages |
+| Routing | Fixed at initialization | Specified at send time (or via default destination) |
+| Fan-out | 1 to many (broadcast to all subscribers) | 1 to 1 per message |
+| Filterable | No | Yes |
+| Typical data | Voltages, temperatures, flow rates | Commands, sensor readings, protocol packets |
+
+The key design question: **does this signal model a physical quantity at a shared boundary, or information traveling over a communication channel?** Physical quantities belong in value federates; information packets belong in message federates.
+
+## Filters
+
+Filters are HELICS objects that can intercept and modify messages in transit, modeling communication-network effects. Filters are associated with the core (and thus the federate's endpoints) and operate on messages as they pass through HELICS.
+
+**Source filters** act on messages as they leave an endpoint.  
+**Destination filters** act on messages as they arrive at an endpoint.
+
+Built-in filter functions include:
+
+- **Time delay** — Fixed or random delay before delivery
+- **Random drop** — Probabilistic packet loss
+- **Packet translation** — Message content modification
+- **Cloning** — Deliver a copy of the message to an additional destination
+- **Rerouting** — Change the destination of a message in transit
+- **Firewall** — Block messages that do not meet specified criteria
+
+```json
+{
+  "filters": [
+    {
+      "name": "delay_filter",
+      "sourcetargets": "SensorFederate/ep",
+      "operation": "delay",
+      "properties": {
+        "name": "delay",
+        "value": 0.1
+      }
+    }
+  ]
+}
+```
+
+<Note>
+Filters only act on messages, not values. Because HELICS values model direct physical connections, they do not pass through the generic communication network that filters operate on. If you need filter-like behavior on value-type data, you must restructure that signal as a message.
+</Note>
+
+## Subscribing an endpoint to a value publication
+
+Message federates can subscribe an endpoint to a value publication. Every time the publication is updated, HELICS automatically generates a message and delivers it to the subscribing endpoint. Unlike a value subscription, these messages **queue** rather than overwrite, so the federate may receive multiple messages between time grants.
+
+```c
+// Subscribe endpoint "ControllerFederate/ep" to a value publication
+helicsEndpointSubscribe(ep, "BatteryFederate/EV1_current", &err);
+```
+
+```python
+h.helicsEndpointSubscribe(ep, "BatteryFederate/EV1_current")
+```
+
+<Warning>
+Subscribing an endpoint to a value publication bypasses the need for a sending endpoint on the publishing side. This is convenient but prevents you from later inserting a full communication-system simulator between the two federates, because that requires both a source endpoint and a destination endpoint. Use this feature only when communication modeling is not needed.
+</Warning>

@@ -1,0 +1,180 @@
+---
+title: 'HELICS Federation Architecture and Topology Patterns'
+description: 'Common HELICS federation topology patterns, from single-broker local setups to multi-broker hierarchies and HPC deployments with MPI cores.'
+keywords: ['HELICS', 'federation architecture', 'broker hierarchy', 'multi-broker', 'core types', 'distributed co-simulation', 'HPC', 'ZMQ', 'MPI']
+---
+
+The physical relationship between federates, cores, and brokers in a HELICS co-simulation is called its **architecture** or **topology**. Choosing the right architecture matters because it affects both the complexity of your configuration and the performance of the co-simulation. Simple co-simulations on a single machine need very little thought about architecture, while large federations running across many compute nodes benefit significantly from deliberate design. This guide describes the most common patterns and explains when each is appropriate.
+
+## Architecture building blocks
+
+Every HELICS co-simulation has three types of components:
+
+- **Federates** — The individual simulator instances. Each federate has a unique name and participates in time synchronization with all other federates.
+- **Cores** — The communication layer embedded within each simulator. A core connects to a broker and manages the federate's interfaces (publications, subscriptions, endpoints). In most cases, one core contains exactly one federate.
+- **Brokers** — The message routing components that coordinate time synchronization and pass data between federates. Every federation has at least one broker. Brokers can be organized into hierarchies.
+
+## Single-broker federation (most common)
+
+The most common HELICS architecture places all federates on the same machine, each connected through its own core to a single broker. This is the pattern used in all HELICS fundamental examples and is the right starting point for any new co-simulation.
+
+```
+ Federate A    Federate B    Federate C
+    |               |               |
+  Core A          Core B          Core C
+    \               |               /
+     \              |              /
+           Single Broker
+```
+
+**When to use:** Local development, co-simulations running on a single workstation or server, and any federation with fewer than a few dozen federates where performance is not a primary concern.
+
+**Starting the broker:**
+
+```bash
+helics_broker -f 3 --loglevel=warning
+```
+
+The `-f 3` flag tells the broker to wait for exactly three federates before initialization proceeds.
+
+## Multiple federates on a single core
+
+For simulators that are multi-threaded by nature—such as a single application managing many controllers—multiple federates can share a single core. This eliminates the overhead of inter-process communication between those federates, replacing it with inter-thread communication.
+
+```
+    Thread 1     Thread 2     Thread 3
+  Federate A   Federate B   Federate C
+       \            |            /
+              Single Core
+                   |
+                Broker
+```
+
+**When to use:** A single multi-threaded executable that represents multiple independent simulated entities (e.g., all the thermostats in a large building managed by one process). This provides the highest intra-process performance.
+
+## Multi-machine federation (distributed)
+
+When a federation is too computationally demanding for a single machine, federates can be distributed across multiple compute nodes. All federates still connect to a common broker. The broker can run on one of the compute nodes or on a dedicated node.
+
+```
+  Compute Node 1       Compute Node 2        Dedicated
+  Federate A           Federate C            Broker
+  Federate B           Federate D
+      |                    |                    |
+    Core A+B             Core C+D               |
+         \                  /                   |
+          \                /                    |
+           ----[Network]---+----[Network]--------+
+```
+
+**Configuration:** Each federate's JSON file must specify the broker's IP address in `core_init_string`:
+
+```json
+{
+    "name": "DistributionSystemA",
+    "coreType": "zmq",
+    "core_init_string": "--broker_address=tcp://192.168.1.100"
+}
+```
+
+**When to use:** Federates that require significant computational resources that don't fit on one machine. The ZMQ core type handles multi-machine federation transparently.
+
+## Multi-broker hierarchy
+
+When federates on the same compute node communicate frequently with each other but infrequently with federates on other nodes, placing a local broker on each node keeps most message traffic local. Only inter-node messages travel up the broker hierarchy to the root broker.
+
+```
+  Compute Node 1              Compute Node 2
+  Federate A  Federate B      Federate C  Federate D
+       \         /                \         /
+        Sub-Broker A               Sub-Broker B
+              \                       /
+               \                     /
+                    Root Broker
+```
+
+**Why this helps:** Each sub-broker handles the high-frequency local messages, reducing load and latency on the root broker. The root broker only sees inter-node traffic, which is typically much lower volume.
+
+**Configuring the hierarchy:**
+
+Federates on Node 1 point to Sub-Broker A:
+```json
+{
+    "name": "DistributionSystemA",
+    "coreType": "zmq",
+    "core_init_string": "--broker_address=tcp://192.168.1.101"
+}
+```
+
+Sub-Broker A is started pointing to the root broker:
+```bash
+helics_broker -f 200 --broker_address=tcp://192.168.1.100
+```
+
+The root broker specifies how many sub-brokers to expect:
+```bash
+helics_broker -f 1 --sub_brokers=2
+```
+
+**When to use:** Large federations distributed across multiple compute nodes where inter-node communication is significantly less frequent than intra-node communication. The potential performance gain must justify the added configuration complexity.
+
+<Tip>
+  A full working example of a broker hierarchy is available in the [HELICS Examples repository](https://github.com/GMLC-TDC/HELICS-Examples/tree/main/user_guide_examples/advanced/advanced_brokers/hierarchies).
+</Tip>
+
+## Core type selection
+
+The `coreType` field in the federate's JSON configuration (or `--coretype` on the command line) determines the messaging technology used between the federate's core and its broker. All federates and brokers in a given segment of the federation must use compatible core types.
+
+General performance ranking from best to worst for typical use cases: MPI > IPC > UDP > TCP > ZMQ.
+
+<CardGroup cols={2}>
+  <Card title="ZMQ (default)" icon="network-wired">
+    Best for local development and multi-machine federations over standard networks. Reliable delivery, automatic reconnection, supports any number of machines. Default when `coreType` is omitted.
+  </Card>
+  <Card title="IPC" icon="microchip">
+    Fastest option for single-machine federations. Uses Boost interprocess communication (memory-mapped files). Cannot span multiple machines and does not support broker hierarchies.
+  </Card>
+  <Card title="TCP" icon="ethernet">
+    Alternative to ZMQ for platforms where ZMQ is unavailable. Uses the asio library. Better raw throughput than ZMQ in some configurations since it avoids ZMQ overhead.
+  </Card>
+  <Card title="MPI" icon="server">
+    Designed for HPC cluster environments where MPI is installed and managed by the job scheduler. Provides the best performance in those environments. Still under active development.
+  </Card>
+</CardGroup>
+
+## Multi-protocol (multi-core) federation
+
+In some scenarios, different parts of a federation must use different core types—for example, a set of federates running inside an HPC cluster using MPI and a set outside the cluster using ZMQ. HELICS supports this through a **multi-broker** configuration that accepts connections from multiple core types simultaneously.
+
+```
+  HPC Cluster                    External Nodes
+  Fed-A (MPI)  Fed-B (MPI)       Fed-C (ZMQ)
+       \           /                   |
+        MPI Broker                     |
+            \                          |
+             \                         |
+              --- Multi-Protocol Broker +
+```
+
+The multi-protocol broker is started with both `--zmq` and `--mpi` flags to accept connections from both core types. See the [HELICS multibroker example](https://github.com/GMLC-TDC/HELICS-Examples/tree/main/user_guide_examples/advanced/advanced_brokers/multi_broker) for a complete implementation.
+
+## Performance considerations
+
+| Architecture | Federation size | Network | Relative complexity |
+|---|---|---|---|
+| Single broker, single machine | Small to medium | None required | Low |
+| Single broker, multiple machines | Small to medium | LAN/WAN | Low |
+| Multi-broker hierarchy | Large | LAN/WAN | Medium |
+| MPI cluster with ZMQ bridge | Very large | HPC cluster | High |
+
+**Key factors affecting performance:**
+
+- **Broker placement** — Put the broker physically close (low latency) to the federates it serves. In multi-machine setups, the broker's network location matters.
+- **Message volume** — Federates that exchange many messages at every time step benefit most from being on the same local broker.
+- **Time step granularity** — Many small time steps generate more broker overhead than fewer large steps. Match period to the actual temporal resolution needed.
+- **Core type** — IPC outperforms ZMQ on a single machine. For distributed co-simulations, ZMQ is the practical default unless you are on an HPC system.
+
+<Warning>
+  Adding broker hierarchy layers increases configuration complexity and can introduce subtle timing issues. Only add sub-brokers if profiling shows that the single-broker configuration is actually the bottleneck.
+</Warning>

@@ -1,0 +1,408 @@
+---
+title: "HELICS Webserver REST API and Query Reference"
+description: "Enable and use the HELICS webserver REST API to inspect federation topology, query broker and federate state, and retrieve JSON responses with curl."
+keywords: ["HELICS", "REST API", "queries", "webserver", "broker", "federation", "introspection", "HTTP"]
+---
+
+HELICS includes a built-in HTTP webserver that allows external tools to query the state of a running federation over standard HTTP. The webserver is available starting in HELICS 2.4 and is hosted by the `helics_broker_server` process. It enables real-time inspection of federation topology, current times, publications, subscriptions, endpoints, and federate states without requiring modification of the federate source code.
+
+The webserver requires Boost 1.70 or newer. It can be disabled at build time with `HELICS_DISABLE_BOOST=ON` or `HELICS_DISABLE_WEBSERVER=ON`.
+
+## Enabling the webserver
+
+Start a broker server with the `--http` flag to enable the REST API:
+
+```bash
+helics_broker_server --http --zmq --duration 30minutes
+```
+
+By default the server listens on `localhost:43542`. To customize the port and interface:
+
+```json
+{
+  "http": {
+    "port": 8080,
+    "interface": "0.0.0.0"
+  }
+}
+```
+
+```bash
+helics_broker_server --http --zmq --config broker_server_config.json
+```
+
+Or pass port settings directly on the command line:
+
+```bash
+helics_broker_server --http --zmq --http_server_args="--http_port=8080 --external"
+```
+
+The `HELICS_HTTP_PORT` environment variable is also recognized for setting the HTTP port. To make the server accessible from outside localhost, add `--external` to the `http_server_args`.
+
+## Websocket API
+
+Start the broker server with `--web` instead of `--http` to enable a WebSocket interface on the same queries:
+
+```bash
+helics_broker_server --web --zmq --config broker_server_config.json
+```
+
+The WebSocket server defaults to port 43543 and acknowledges `HELICS_WEBSOCKET_PORT` as an environment variable. Responses are always JSON packets:
+
+```json
+{ "status": 0, "value": "<query result>" }
+```
+
+Error responses:
+
+```json
+{ "status": 404, "error": "target not found" }
+```
+
+## HTTP actions
+
+| HTTP verb | Purpose |
+|---|---|
+| `GET` | Execute a query; target and query string specified in the URL or as query parameters |
+| `PUT` | Create a new broker |
+| `DELETE` | Remove a broker |
+| `POST` | General command; action controlled by the `command` field |
+| `SEARCH` | Execute a query with parameters in the request body |
+
+## URL structure
+
+Queries follow a predictable URL pattern:
+
+```
+http://<host>:<port>/<broker>/<target>/<query>
+```
+
+The following forms are all equivalent and execute the `publications` query against the root target of `brokerA`:
+
+```bash
+# Positional in URL
+curl http://localhost:43542/brokerA/publications
+
+# Query parameters
+curl "http://localhost:43542?broker=brokerA&query=publications&target=root"
+
+# JSON body (POST or SEARCH)
+curl -X SEARCH http://localhost:43542 \
+  -H "Content-Type: application/json" \
+  -d '{"broker": "brokerA", "target": "root", "query": "publications"}'
+```
+
+## Query request parameters
+
+| Parameter | Description |
+|---|---|
+| `broker` | The broker to target. Also used as the name when creating or deleting a broker. |
+| `target` | The specific object to query (federate name, `broker`, `core`, `root`, `federation`). |
+| `query` | The query string to execute on the target. |
+| `command` | Explicit command override for POST requests: `query`, `search`, `create`, `delete`. |
+| `type` | Broker type when creating a broker with `command=create`. |
+| `args` | Command-line arguments to pass when creating a broker. |
+
+## Query targets
+
+Each query must specify a target. Targets can be referenced by their role in the federation hierarchy or by their explicit name.
+
+| Target | Description |
+|---|---|
+| `broker` | The first broker encountered going up from the calling context |
+| `root`, `federation`, `rootbroker` | The root broker of the entire federation |
+| `core` | The core of a federate (not valid from a broker) |
+| `federate` | The local federate or the first federate of a core |
+| `parent` | The parent of the calling object |
+| `global` | Retrieve the value of a named global variable |
+| `<object name>` | Any named broker, core, or federate in the federation |
+
+<Warning>
+If a broker is named `broker` or a federate is named `root`, those names will shadow the reserved target names. Use explicit object names to avoid ambiguity.
+</Warning>
+
+## Available queries by target
+
+### Federate queries
+
+These queries are answered by any named federate:
+
+| Query | Return type | Description |
+|---|---|---|
+| `name` | string | Identifier of the federate |
+| `exists` | boolean | Whether the federate exists in the federation |
+| `isinit` | boolean | Whether the federate has entered initialization mode |
+| `state` | string | Current operational state of the federate |
+| `global_state` | structure | State of the federate and all connected components |
+| `publications` | string vector | Current publications registered by the federate |
+| `publication_details` | structure | Detailed metadata for each publication |
+| `subscriptions` | string vector | Current subscriptions of the federate |
+| `inputs` | string vector | Current named inputs of the federate |
+| `input_details` | structure | Detailed metadata for each input |
+| `endpoints` | string vector | Current endpoints of the federate |
+| `endpoint_details` | structure | Detailed metadata for each endpoint |
+| `current_time` | structure | Current granted time and related timing info |
+| `dependencies` | string vector | Objects this federate depends on |
+| `dependents` | string vector | Objects that depend on this federate |
+| `dependency_graph` | structure | Full dependency graph for the federation |
+| `data_flow_graph` | structure | All data connections involving this federate |
+| `endpoint_filters` | structure | Filter configuration for each endpoint |
+| `version` | string | HELICS library version string |
+| `queries` | string vector | List of all supported query strings |
+| `tags` | structure | All user-defined tags (key-value pairs) as JSON |
+| `tag/<tagname>` | string | Value of a specific tag by name |
+| `logs` | structure | Recent log messages from the log buffer (requires `logbuffer > 0`) |
+| `barriers` | structure | Current time barriers |
+
+### Core queries
+
+These queries are answered by a HELICS core:
+
+| Query | Return type | Description |
+|---|---|---|
+| `name` | string | Identifier of the core |
+| `address` | string | Network address of the core |
+| `isinit` | boolean | Whether the core has entered initialization mode |
+| `isconnected` | boolean | Whether the core is connected to the network |
+| `federates` | string vector | Federates currently connected to this core |
+| `publications` | string vector | All publications defined in this core |
+| `inputs` | string vector | All named inputs defined in this core |
+| `endpoints` | string vector | All endpoints defined in this core |
+| `filters` | string vector | All filters registered in this core |
+| `publication_details` | structure | Detailed publication metadata |
+| `input_details` | structure | Detailed input metadata |
+| `endpoint_details` | structure | Detailed endpoint metadata |
+| `filter_details` | structure | Detailed filter metadata |
+| `current_time` | structure | Local time state of the core |
+| `global_time` | structure | Time status of all federates and cores |
+| `current_state` | structure | State of all components as known locally |
+| `global_state` | structure | State gathered from all components |
+| `federate_map` | structure | Hierarchical map of federates in this core |
+| `dependency_graph` | structure | Dependency representation for this core |
+| `data_flow_graph` | structure | All data connections in this core |
+| `federation_state` | structure | Status of all brokers and federates |
+| `dependencies` | structure | Full dependency information |
+| `version` | string | HELICS library version string |
+| `version_all` | structure | Version strings for all components |
+| `counter` | string | Change counter (increments on federation changes) |
+| `logs` | structure | Buffered log messages |
+| `tags` | structure | All tag key-value pairs |
+| `global_time_debugging` | structure | Detailed time debugging state |
+| `global_flush` | structure | Flush ordered messages and return object IDs |
+
+### Broker queries
+
+These queries are answered by a HELICS broker:
+
+| Query | Return type | Description |
+|---|---|---|
+| `name` | string | Identifier of the broker |
+| `address` | string | Network address of the broker |
+| `isinit` | boolean | Whether the broker has entered initialization mode |
+| `isconnected` | boolean | Whether the broker is connected |
+| `federates` | string vector | All federates under this broker's hierarchy |
+| `brokers` | string vector | Connected sub-brokers and cores |
+| `publications` | string vector | All publications known to this broker |
+| `inputs` | string vector | All named inputs known to this broker |
+| `endpoints` | string vector | All endpoints known to this broker |
+| `filters` | string vector | All filters known to this broker |
+| `publication_details` | structure | Detailed publication metadata |
+| `input_details` | structure | Detailed input metadata |
+| `endpoint_details` | structure | Detailed endpoint metadata |
+| `filter_details` | structure | Detailed filter metadata |
+| `current_state` | structure | Status of all known brokers and federates |
+| `global_state` | structure | State gathered from all system components |
+| `global_status` | structure | Combined `global_time` + `current_state` |
+| `current_time` | string | Local time, or `#na` if not computed |
+| `global_time` | structure | Time status of all federates and cores |
+| `status` | structure | Connected status of the broker |
+| `counts` | structure | Count of brokers, federates, and interfaces |
+| `federate_map` | structure | Hierarchical map of the entire federation |
+| `dependency_graph` | structure | All dependency connections in the federation |
+| `data_flow_graph` | structure | All data connections in the federation |
+| `version` | string | HELICS library version string |
+| `version_all` | structure | Version strings of all broker components |
+| `counter` | string | Change counter |
+| `barriers` | structure | Current time barriers |
+| `logs` | structure | Buffered log messages |
+| `time_monitor` | structure | Current time from the designated monitor federate |
+| `monitor` | string | Name of the current time monitor object |
+| `global_time_debugging` | structure | Detailed time debugging state |
+| `global_flush` | structure | Flush all ordered messages and return IDs |
+
+## JSON response format
+
+Queries that return structures produce JSON responses. String vectors (sv) use a semicolon-delimited string format rather than a JSON array.
+
+### Broker list
+
+```bash
+curl http://localhost:43542/brokers
+```
+
+```json
+{
+  "brokers": [
+    {
+      "address": "tcp://127.0.0.1:23408",
+      "isConnected": true,
+      "isOpen": false,
+      "isRoot": true,
+      "name": "brokerA"
+    }
+  ]
+}
+```
+
+### Federate map
+
+```bash
+curl http://localhost:43542/brokerA/federate_map
+```
+
+```json
+{
+  "brokers": [],
+  "cores": [
+    {
+      "federates": [
+        {
+          "id": 131072,
+          "name": "fedA_1",
+          "parent": 1879048192
+        }
+      ],
+      "id": 1879048192,
+      "name": "core-auto-1",
+      "parent": 1
+    }
+  ],
+  "id": 1,
+  "name": "brokerA"
+}
+```
+
+### Current time
+
+```bash
+curl http://localhost:43542/brokerA/fedA_1/current_time
+```
+
+```json
+{
+  "allow": 1.0,
+  "granted": 0.5,
+  "requested": 1.0
+}
+```
+
+### Publications list
+
+```bash
+curl http://localhost:43542/brokerA/publications
+```
+
+Returns a semicolon-delimited string vector:
+
+```text
+fedA_1/voltage;fedA_2/current
+```
+
+### Global state
+
+```bash
+curl http://localhost:43542/brokerA/global_state
+```
+
+```json
+{
+  "brokers": [
+    {
+      "name": "brokerA",
+      "state": "connected"
+    }
+  ],
+  "federates": [
+    {
+      "name": "fedA_1",
+      "state": "executing"
+    },
+    {
+      "name": "fedA_2",
+      "state": "executing"
+    }
+  ]
+}
+```
+
+### Error response
+
+Querying a nonexistent target or using an invalid query string returns a JSON error:
+
+```bash
+curl http://localhost:43542/brokerA/nonexistent_federate/publications
+```
+
+```json
+{
+  "error": {
+    "code": 404,
+    "message": "target not found"
+  }
+}
+```
+
+## Query timeouts
+
+Queries travel along priority message paths and do not block time advancement. They do have a default timeout of 15 seconds. If a query cannot be completed within the timeout (due to a federate failure or network issue), the string `#timeout` is returned. The timeout can be changed via the `--querytimeout` option on cores and brokers:
+
+```bash
+helics_broker_server --http --zmq --querytimeout=30s
+```
+
+## Using queries from the C API
+
+Queries are also available programmatically through the HELICS C API without the webserver:
+
+```c
+// Create a query
+HelicsQuery q = helicsCreateQuery("brokerA", "publications");
+
+// Execute against a broker object
+const char* result = helicsQueryBrokerExecute(q, broker, &err);
+printf("Publications: %s\n", result);
+
+// Or execute in the context of a federate
+const char* result2 = helicsQueryExecute(q, fed, &err);
+
+// Always free the query
+helicsQueryFree(q);
+```
+
+Async queries are also supported:
+
+```c
+helicsQueryExecuteAsync(q, fed, &err);
+// ... do other work ...
+while (!helicsQueryIsCompleted(q)) { /* wait */ }
+const char* result = helicsQueryExecuteComplete(q, &err);
+```
+
+<Tip>
+The `global_flush` query forces all messages in the ordered channel to be processed before returning. Use it when you need a guaranteed consistent snapshot of the federation state.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="C API reference" icon="c" href="/api/c-api">
+    Programmatic query API using helicsCreateQuery
+  </Card>
+  <Card title="C++ API reference" icon="code" href="/api/cpp-api">
+    Query functions in the C++ Application API
+  </Card>
+  <Card title="Configuration options" icon="sliders" href="/api/configuration-options">
+    logbuffer option to enable log retrieval via queries
+  </Card>
+  <Card title="Language bindings" icon="layers" href="/api/language-bindings">
+    Use queries from Python, Julia, Java, and MATLAB
+  </Card>
+</CardGroup>

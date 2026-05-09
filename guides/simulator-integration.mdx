@@ -1,0 +1,220 @@
+---
+title: 'How to Integrate an Existing Simulator with HELICS'
+description: 'Step-by-step guide to wrapping an existing simulator as a HELICS federate, covering integration patterns, required API calls, and JSON configuration.'
+keywords: ['HELICS', 'simulator integration', 'federate', 'co-simulation', 'API', 'JSON config']
+---
+
+Integrating an existing simulator with HELICS means teaching it to participate in a co-simulation federation as a **federate**. The amount of work involved depends heavily on whether you have access to the simulator's source code, what language it is written in, and how it already manages time internally. This guide walks through the key decisions you must make before writing a single line of integration code and then shows you exactly which HELICS API calls are required to get a federate running.
+
+## Questions to answer before starting
+
+Before writing integration code, answering three questions will determine which integration pattern is right for your simulator.
+
+**What language is the simulator written in?**
+HELICS provides a native C++ API and a C API that is wrapped for Python, Julia, Java, MATLAB, and Nim. If your simulator is written in one of those languages you can call HELICS directly. If it is a compiled binary with no bindings, you will need a socket- or process-level wrapper.
+
+**What kind of codebase are you working with?**
+- Open-source simulators can be modified to call HELICS APIs directly.
+- Closed-source or commercial simulators typically expose a scripting interface (Python, MATLAB, etc.) that can be used to wrap the tool.
+- Simulators with no scripting API require a socket-based or command-line wrapper.
+
+**How does the simulator represent time?**
+HELICS must know the simulator's minimum time step (`time_delta` or `period`) so it never asks the simulator to advance to a time it cannot represent. A simulator that uses fixed one-second steps should declare `"period": 1` in its configuration.
+
+## Integration patterns
+
+<Tabs>
+  <Tab title="Direct API (open source)">
+    The cleanest integration path. You add HELICS API calls directly to the simulator's source code and build it with the HELICS library linked in. This is the approach used by the Battery and Charger examples in the HELICS fundamental examples.
+
+    ```python
+    import helics as h
+
+    fed = h.helicsCreateValueFederateFromConfig("my_federate.json")
+    pub = h.helicsFederateGetPublicationByIndex(fed, 0)
+    sub = h.helicsFederateGetInputByIndex(fed, 0)
+    ```
+  </Tab>
+  <Tab title="Scripting wrapper">
+    Many commercial tools (GridLAB-D, OpenDSS, MATLAB/Simulink) expose a scripting interface. You write a Python or MATLAB wrapper script that drives the tool and calls HELICS APIs to exchange data between time steps. The simulator itself never needs to be recompiled.
+
+    ```python
+    import helics as h
+    import my_simulator_bindings as sim
+
+    fed = h.helicsCreateValueFederateFromConfig("federate.json")
+    # ... enter executing mode, then in the time loop:
+    sim.set_input(h.helicsInputGetDouble(sub))
+    sim.run_one_step()
+    h.helicsPublicationPublishDouble(pub, sim.get_output())
+    ```
+  </Tab>
+  <Tab title="Socket / process wrapper">
+    For fully opaque binaries, a small intermediary process reads data from the HELICS federation and communicates with the simulator over a named pipe, shared memory, or a local socket. This is the most complex approach and should be a last resort.
+  </Tab>
+</Tabs>
+
+## Step-by-step integration process
+
+<Steps>
+  <Step title="Identify the data boundary">
+    Decide exactly which values your simulator will publish to the federation (outputs) and which values it needs to receive from other federates (inputs). Each published signal becomes a HELICS **publication** and each received signal becomes a **subscription** or **input**. Document the data type (double, complex, string, etc.) and physical units for every signal.
+  </Step>
+
+  <Step title="Write a federate JSON configuration file">
+    Create a JSON file that describes the federate to HELICS. This file covers the federate name, core type, timing parameters, and the full list of publications and subscriptions. See the [annotated example below](#sample-json-configuration-file) for the complete structure.
+  </Step>
+
+  <Step title="Create the federate object">
+    In your integration code, call one of the `FromConfig` API functions to create the federate from your JSON file. Choose the function that matches the federate type:
+
+    ```python
+    # Value federate (publications and subscriptions only)
+    fed = h.helicsCreateValueFederateFromConfig("federate.json")
+
+    # Message federate (endpoints only)
+    fed = h.helicsCreateMessageFederateFromConfig("federate.json")
+
+    # Combination federate (both value and message interfaces)
+    fed = h.helicsCreateCombinationFederateFromConfig("federate.json")
+    ```
+  </Step>
+
+  <Step title="Retrieve interface handles">
+    After creating the federate from config, fetch the publication and subscription handles so your code can use them in the time loop:
+
+    ```python
+    pub_count = h.helicsFederateGetPublicationCount(fed)
+    pub = h.helicsFederateGetPublicationByIndex(fed, 0)
+
+    sub_count = h.helicsFederateGetInputCount(fed)
+    sub = h.helicsFederateGetInputByIndex(fed, 0)
+    ```
+  </Step>
+
+  <Step title="Set the terminate-on-error flag">
+    It is strongly recommended to set this flag so your federate exits cleanly if another federate in the federation fails instead of hanging indefinitely:
+
+    ```python
+    h.helicsFederateSetFlagOption(fed, h.HELICS_FLAG_TERMINATE_ON_ERROR, True)
+    ```
+  </Step>
+
+  <Step title="Enter executing mode">
+    This is a blocking call. Your federate will wait here until every other federate has also completed its initialization and is ready to begin. Time is at zero when this call returns.
+
+    ```python
+    h.helicsFederateEnterExecutingMode(fed)
+    ```
+  </Step>
+
+  <Step title="Run the time loop">
+    Advance through simulation time by requesting the next time step from HELICS, reading inputs, running simulator calculations, and publishing outputs:
+
+    ```python
+    current_time = 0.0
+    end_time = 3600.0  # one hour
+
+    while current_time < end_time:
+        # Request the next time step
+        current_time = h.helicsFederateRequestTime(fed, current_time + period)
+
+        # Read inputs
+        value = h.helicsInputGetDouble(sub)
+
+        # Run simulator for this time step
+        result = my_simulator.step(current_time, value)
+
+        # Publish outputs
+        h.helicsPublicationPublishDouble(pub, result)
+    ```
+  </Step>
+
+  <Step title="Finalize the federate">
+    After the time loop completes, cleanly disconnect the federate from the federation:
+
+    ```python
+    h.helicsFederateFinalize(fed)
+    h.helicsFederateFree(fed)
+    h.helicsCloseLibrary()
+    ```
+  </Step>
+</Steps>
+
+## Minimum required API calls
+
+For a basic value federate that does nothing but publish a constant and subscribe to an input, these six calls are the minimum required:
+
+```python
+import helics as h
+
+fed = h.helicsCreateValueFederateFromConfig("federate.json")
+pub = h.helicsFederateGetPublicationByIndex(fed, 0)
+sub = h.helicsFederateGetInputByIndex(fed, 0)
+
+h.helicsFederateEnterExecutingMode(fed)
+
+current_time = 0.0
+while current_time < 100.0:
+    current_time = h.helicsFederateRequestTime(fed, current_time + 1.0)
+    input_val = h.helicsInputGetDouble(sub)
+    h.helicsPublicationPublishDouble(pub, input_val * 2.0)
+
+h.helicsFederateFinalize(fed)
+```
+
+## Sample JSON configuration file
+
+The JSON file passed to `helicsCreateValueFederateFromConfig` (or the message/combination equivalents) fully describes the federate and its interfaces. The file is reusable—the same simulator executable can be used as different federates just by swapping JSON files.
+
+```json
+{
+    "name": "distribution_feeder_0",
+    "coreType": "zmq",
+    "period": 60,
+    "offset": 0,
+    "uninterruptible": false,
+    "terminate_on_error": true,
+    "loglevel": "warning",
+    "publications": [
+        {
+            "key": "distribution_feeder_0/total_load",
+            "global": true,
+            "type": "complex",
+            "unit": "VA"
+        }
+    ],
+    "subscriptions": [
+        {
+            "key": "TransmissionSim/transmission_voltage",
+            "required": true,
+            "type": "complex",
+            "unit": "V",
+            "info": "{\"object\": \"network_node\", \"property\": \"positive_sequence_voltage\"}"
+        }
+    ]
+}
+```
+
+<AccordionGroup>
+  <Accordion title="JSON field reference">
+    - **`name`** — Required. Unique name for this federate across the entire federation. HELICS uses this as the federate's address for message routing.
+    - **`coreType`** — The messaging technology to use (`zmq`, `tcp`, `ipc`, `mpi`). Defaults to `zmq`. See [Federation Architectures](/guides/federation-architectures) for guidance on choosing a core type.
+    - **`period`** — Minimum time step size in seconds. HELICS will never grant the federate a time that is not a multiple of `period + offset`.
+    - **`offset`** — Time offset from zero for the first time step. Used to stagger federates that share the same period.
+    - **`uninterruptible`** — When `false` (the default), HELICS can grant an earlier time than requested if data arrives that the federate should process. Set to `true` to force HELICS to always wait until the requested time.
+    - **`terminate_on_error`** — When `true`, an error in any federate causes the entire federation to terminate. Strongly recommended during development.
+    - **`loglevel`** — Logging verbosity. Valid values: `no_print`, `error`, `warning`, `summary`, `connections`, `interfaces`, `timing`, `data`, `debug`, `trace`.
+    - **`publications[].key`** — Unique identifier for this publication at the federate level. With `global: true` it must be unique across the entire federation.
+    - **`publications[].global`** — When `true`, other federates subscribe using just the `key` string. When `false`, they must use `<federate_name>/<key>`.
+    - **`publications[].type`** — Data type: `double`, `int`, `complex`, `string`, `boolean`, `vector`, `named_vector`, `json`.
+    - **`publications[].unit`** — Physical unit string (e.g., `V`, `VA`, `m/s^2`). HELICS performs unit conversion for `double` types.
+    - **`subscriptions[].key`** — The publication key this subscription will receive. If the publishing federate uses `global: true`, this is just the key. Otherwise use `<federate_name>/<key>`.
+    - **`subscriptions[].required`** — When `true`, the co-simulation will fail to initialize if no federate publishes to this subscription.
+    - **`subscriptions[].info`** — Arbitrary string ignored by HELICS; typically used to pass simulator-internal configuration such as which model variable to update with the incoming value.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  If the simulator you are integrating already has HELICS support (like GridLAB-D, OpenDSS, or MATPOWER), you only need to write the JSON configuration file. The simulator executable already contains the integration code.
+</Note>

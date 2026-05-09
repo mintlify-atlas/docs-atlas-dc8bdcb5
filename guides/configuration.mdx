@@ -1,0 +1,289 @@
+---
+title: 'How to Configure HELICS Federates, Cores, and Brokers'
+description: 'Reference for the three HELICS configuration methods—JSON file, command-line flags, and direct API calls—with field descriptions and examples.'
+keywords: ['HELICS', 'configuration', 'JSON', 'federate config', 'broker config', 'core type', 'command line']
+---
+
+HELICS federates and brokers can be configured in three distinct ways: a JSON configuration file, command-line flags passed at startup, or direct API calls made inside the simulator's source code. Each method exposes a different subset of options and suits different stages of a project. In practice, most federations use JSON files for federate configuration and command-line flags for the broker, with API calls reserved for dynamic or programmatic needs.
+
+## The three configuration methods
+
+<Tabs>
+  <Tab title="JSON file">
+    The JSON configuration file is the recommended approach for most federates. It cleanly separates the simulator's code from its use in a particular co-simulation: the same simulator binary can participate in different federations just by swapping configuration files.
+
+    To load a JSON configuration file, call one of these API functions at federate creation time:
+
+    ```python
+    fed = h.helicsCreateValueFederateFromConfig("my_federate.json")
+    fed = h.helicsCreateMessageFederateFromConfig("my_federate.json")
+    fed = h.helicsCreateCombinationFederateFromConfig("my_federate.json")
+    ```
+
+    **When to use JSON:** Whenever the federate is stable enough to have a defined interface. JSON files serve as human-readable artifacts that document what a co-simulation does, making them useful for debugging and sharing.
+  </Tab>
+  <Tab title="Command line">
+    Options can be passed directly on the command line when launching a federate or broker. The syntax mirrors the JSON key names, preceded by `--`:
+
+    ```bash
+    helics_broker -f 3 --loglevel=warning --name=root_broker
+    python my_federate.py --name=feeder_sim --period=60 --coretype=zmq
+    ```
+
+    Most command-line options use the same names as the JSON keys. Single-letter shortcuts are available for the most common flags (`-f` for `--federates`, `-n` for `--name`, `-t` for `--coretype`).
+
+    **When to use command-line:** For quick, one-off changes to a configuration without editing files, such as changing the log level during a debugging session.
+  </Tab>
+  <Tab title="Direct API calls">
+    API calls give full programmatic control and are the only way to configure a federate dynamically at runtime. You create a `FederateInfo` object, set properties on it, then pass it to the federate constructor:
+
+    ```python
+    fi = h.helicsCreateFederateInfo()
+    h.helicsFederateInfoSetCoreTypeFromString(fi, "zmq")
+    h.helicsFederateInfoSetIntegerProperty(fi, h.HELICS_PROPERTY_INT_LOG_LEVEL, 3)
+    h.helicsFederateInfoSetTimeProperty(fi, h.HELICS_PROPERTY_TIME_PERIOD, 60.0)
+    h.helicsFederateInfoSetFlagOption(fi, h.HELICS_FLAG_TERMINATE_ON_ERROR, True)
+    fed = h.helicsCreateValueFederate("my_federate", fi)
+    ```
+
+    **When to use API calls:** During early development before the interface is stable, or when configuration must be derived from runtime conditions (e.g., querying the federation to decide what to publish).
+  </Tab>
+</Tabs>
+
+<Note>
+  Not all configuration options are available in all three forms. Publications and subscriptions, for example, cannot be defined from the command line—they must be set in the JSON file or via API calls.
+</Note>
+
+## Complete federate JSON configuration
+
+The following shows a comprehensive JSON configuration file with commonly used fields. Most co-simulations require only a small subset of these options.
+
+```json
+{
+    "name": "my_federate",
+    "coreType": "zmq",
+    "core_init_string": "--broker_address=tcp://127.0.0.1",
+    "terminate_on_error": true,
+    "loglevel": "warning",
+    "logfile": "my_federate.log",
+
+    "period": 60,
+    "offset": 0,
+    "uninterruptible": false,
+    "wait_for_current_time_update": false,
+    "only_transmit_on_change": false,
+    "only_update_on_change": false,
+
+    "publications": [
+        {
+            "key": "my_federate/output_voltage",
+            "global": true,
+            "type": "double",
+            "unit": "V",
+            "only_transmit_on_change": true,
+            "tolerance": 0.01
+        }
+    ],
+    "subscriptions": [
+        {
+            "key": "other_federate/control_signal",
+            "required": true,
+            "type": "double",
+            "unit": "pu",
+            "default": 1.0,
+            "only_update_on_change": false
+        }
+    ],
+    "inputs": [
+        {
+            "key": "multi_input_bus",
+            "type": "double",
+            "global": true,
+            "targets": ["pub1", "pub2"],
+            "multi_input_handling_method": "average",
+            "default": 0.0
+        }
+    ],
+    "endpoints": [
+        {
+            "name": "control_ep",
+            "global": true,
+            "destination": "controller/command_ep",
+            "info": ""
+        }
+    ]
+}
+```
+
+## Core type configuration
+
+The `coreType` field selects the inter-process messaging technology used by the federate's core. All federates in a federation typically use the same core type. The valid values are:
+
+<AccordionGroup>
+  <Accordion title="zmq (default)">
+    ZeroMQ is the default and most commonly used core type. It provides reliable message delivery and automatic reconnection, works across multiple machines on a network, and handles a wide range of federation sizes.
+
+    ```json
+    { "coreType": "zmq" }
+    ```
+
+    Use ZMQ for: local development, LAN-connected federations, and any federation where simplicity and reliability are the priority.
+  </Accordion>
+  <Accordion title="zmq_ss">
+    A ZMQ variant that minimizes the number of open sockets. Intended for very large federations with many federates running on a single machine where socket count becomes a constraint.
+
+    ```json
+    { "coreType": "zmq_ss" }
+    ```
+  </Accordion>
+  <Accordion title="tcp">
+    Uses TCP directly without ZMQ. Available as an alternative on platforms where ZMQ is not available or when ZMQ overhead is undesirable. Uses the asio networking library.
+
+    ```json
+    { "coreType": "tcp" }
+    ```
+  </Accordion>
+  <Accordion title="tcp_ss">
+    A TCP variant designed for networking environments where only a single external socket can be exposed from each core or broker.
+
+    ```json
+    { "coreType": "tcp_ss" }
+    ```
+  </Accordion>
+  <Accordion title="ipc">
+    Uses Boost interprocess communication (memory-mapped files) for data transfer. Faster than network-based transports in some cases, but limited to a single shared-memory compute node. Does not support multi-tiered broker hierarchies.
+
+    ```json
+    { "coreType": "ipc" }
+    ```
+
+    Use IPC for: single-machine federations where maximum local performance is needed.
+  </Accordion>
+  <Accordion title="mpi">
+    Uses MPI (Message Passing Interface) for communication. Designed for high-performance computing clusters where MPI is installed and federates are distributed across many nodes. Still under active development.
+
+    ```json
+    { "coreType": "mpi" }
+    ```
+
+    Use MPI for: HPC cluster deployments where MPI infrastructure is already in place.
+  </Accordion>
+  <Accordion title="test">
+    Operates within a single process via inter-thread communication. Intended for testing communication patterns and algorithms; not for production co-simulations. The fastest option when all federates run in a single process.
+
+    ```json
+    { "coreType": "test" }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Key general federate options
+
+<AccordionGroup>
+  <Accordion title="Timing options">
+    | Field | Default | Description |
+    |---|---|---|
+    | `period` | `0` | Minimum time step in seconds. HELICS grants times that are multiples of `n*period + offset`. |
+    | `offset` | `0` | Time offset for the first granted time. |
+    | `time_delta` | `0` | Minimum time between successive time grants (alternative to `period`). |
+    | `uninterruptible` | `false` | When `true`, HELICS will not grant an earlier-than-requested time even if data arrives. |
+    | `wait_for_current_time_update` | `false` | When `true`, this federate is always the last to be granted a given time, ensuring it has all latest inputs. |
+    | `real_time` | `false` | Forces the federate to operate in real time, waiting for wall clock time to match simulation time. |
+    | `rt_tolerance` | `0.2` | Tolerance in seconds for real-time operation. |
+    | `input_delay` | `0` | Artificial delay applied to all incoming values at the core level. |
+    | `output_delay` | `0` | Artificial delay applied to all outgoing values at the core level. |
+  </Accordion>
+  <Accordion title="Behavior flags">
+    | Field | Default | Description |
+    |---|---|---|
+    | `terminate_on_error` | `false` | Terminates the entire federation if this federate encounters an error. Strongly recommended during development. |
+    | `source_only` | `false` | Declares that this federate only publishes data. Allows HELICS to optimize time grants. |
+    | `observer` | `false` | Declares that this federate only subscribes to data. Allows HELICS to optimize time grants. |
+    | `only_transmit_on_change` | `false` | Publications are only sent when the value changes. |
+    | `only_update_on_change` | `false` | Subscriptions only register an update when the value changes. |
+    | `dynamic` | `false` | Allows the federate to join the federation after initialization has begun. |
+  </Accordion>
+  <Accordion title="Logging options">
+    | Field | Default | Description |
+    |---|---|---|
+    | `loglevel` | `"warning"` | Controls the verbosity of both file and console logging. |
+    | `logfile` | `""` | Path to the log file. If empty, logging goes to console only. |
+    | `file_log_level` | `""` | Overrides `loglevel` for file output only. |
+    | `console_log_level` | `""` | Overrides `loglevel` for console output only. |
+    | `force_logging_flush` | `false` | Writes to the log file after every message. Slower but ensures nothing is lost on crash. |
+    | `dump_log` | `false` | Writes all buffered log messages to file when the federate terminates. |
+    | `logbuffer` | `10` | Number of recent log messages to keep in an in-memory buffer (retrievable via query). |
+  </Accordion>
+</AccordionGroup>
+
+## Broker configuration
+
+The broker is launched from the command line. The most common options are:
+
+```bash
+# Start a broker expecting 3 federates, with warning-level logging
+helics_broker -f 3 --loglevel=warning
+
+# Start a broker on a specific port with a named log file
+helics_broker -f 5 --loglevel=connections --logfile=broker.log --port=23405
+
+# Start a root broker expecting 2 sub-brokers and 1 direct federate
+helics_broker -f 1 --sub_brokers=2 --name=root_broker
+```
+
+Key broker command-line options:
+
+| Option | Description |
+|---|---|
+| `-f <n>` / `--federates=<n>` | Minimum number of federates that must connect before initialization proceeds. |
+| `--name=<name>` | Name of this broker instance. |
+| `--loglevel=<level>` | Logging level for the broker. |
+| `--logfile=<path>` | File to write broker logs to. |
+| `--port=<port>` | Port number for this broker to listen on. |
+| `--terminate_on_error` | Terminate the entire federation on any federate error. |
+| `--sub_brokers=<n>` | Minimum number of sub-brokers expected (for hierarchical setups). |
+| `--brokerkey=<key>` | Security key; only federates with the same key can connect. |
+| `--timeout=<ms>` | Milliseconds to wait for all federates to connect. |
+
+## Publication and subscription JSON reference
+
+Publications and subscriptions are defined as arrays in the JSON configuration file:
+
+```json
+{
+    "publications": [
+        {
+            "key": "feeder_load",
+            "global": true,
+            "type": "complex",
+            "unit": "VA",
+            "required": false,
+            "only_transmit_on_change": false,
+            "tolerance": -1,
+            "alias": "",
+            "info": ""
+        }
+    ],
+    "subscriptions": [
+        {
+            "key": "TransmissionSim/bus_voltage",
+            "required": true,
+            "type": "complex",
+            "unit": "V",
+            "global": true,
+            "default": "1.0+0j",
+            "only_update_on_change": false,
+            "tolerance": 0.001,
+            "info": "{\"object\": \"bus_1\", \"property\": \"voltage\"}"
+        }
+    ]
+}
+```
+
+<Tip>
+  The `info` field in publications and subscriptions is completely ignored by HELICS. Use it to store any simulator-specific configuration you need—such as mapping HELICS interface names to internal model variable names.
+</Tip>
+
+<Warning>
+  Subscription keys must exactly match the publication key of the publishing federate. If the publisher sets `global: true`, the key is the raw `key` string. If `global` is `false` (the default), the key is `<federate_name>/<key>`.
+</Warning>

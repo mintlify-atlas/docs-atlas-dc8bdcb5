@@ -1,0 +1,157 @@
+---
+title: 'Dynamic Federations: Late-Joining Federates in HELICS'
+description: 'Understand how HELICS supports dynamic federations, including observer federates, late-joining federates, dynamic publications, and reentrant federates.'
+keywords: ['dynamic federation', 'observer federate', 'late-joining', 'dynamic subscription', 'reentrant', 'bufferData']
+---
+
+In a standard HELICS co-simulation all federates join before execution begins, the federation topology is fixed at initialization, and every federate runs from time zero to the end. Dynamic federations relax these constraints: one or more federates may join the co-simulation after execution has already started, subscribe to existing publications, or even leave and rejoin multiple times during the same run. This flexibility is essential for hardware-in-the-loop setups, real-time co-simulations where components come online during the run, and EV charging scenarios where individual vehicle federates participate only during their active charging window.
+
+## Levels of dynamic federation support
+
+HELICS defines dynamic federation capability in increasing levels of complexity:
+
+| Level | Capability | Introduced |
+|---|---|---|
+| 1 | Existing federates can add subscriptions to existing publications after execution starts | HELICS v3.1 |
+| 2 | Observer-only federates can join after execution begins | HELICS v3.1 |
+| 3 | Existing federates can create new publications/endpoints/filters at runtime | HELICS v3.4 |
+| 4 | Federates can join late with arbitrary interface creation | HELICS v3.4 |
+| 5 | Federates can disconnect and reconnect (reentrant) | HELICS v3.5.1 |
+
+## Enabling dynamic federations
+
+To allow late-joining federates, pass the `--dynamic` flag to the root broker when launching it. Any intermediate brokers or cores through which dynamic federates will connect also need the flag.
+
+```bash
+# Broker expecting 3 initial federates, with the door open for late-joiners
+helics_broker -f3 --dynamic
+```
+
+In a [broker hierarchy](/advanced/broker-hierarchies), add `--dynamic` to each broker in the path from the root to the sub-broker where the dynamic federate will connect.
+
+## Dynamic subscriptions
+
+Subscriptions are normally registered during the creation phase, before `helicsFederateEnterInitializingMode()` is called. Registering subscriptions after that point changes the timing dependencies and is classified as a dynamic subscription.
+
+When a new subscription is added dynamically, the subscriber will not receive any values published before its subscription was created. If Federate A published a value at time zero and Federate B subscribes at time five, Federate B will not receive the time-zero value by default.
+
+### Persistent values with bufferData
+
+To make published values available to late-joining subscribers, set the `bufferData` flag on the publication. The broker then retains the most recently published value and sends it immediately when a new subscription connects.
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    // Enable data buffering at the federate level (applies to all publications)
+    FederateInfo fi;
+    fi.setFlagOption(HELICS_FLAG_BUFFER_DATA, true);
+    ```
+  </Tab>
+  <Tab title="C">
+    ```c
+    helicsFederateInfoSetFlagOption(fi, HELICS_FLAG_BUFFER_DATA, HELICS_TRUE, &err);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import helics as h
+
+    fi = h.helicsCreateFederateInfo()
+    h.helicsFederateInfoSetFlagOption(fi, h.HELICS_FLAG_BUFFER_DATA, True)
+    ```
+  </Tab>
+</Tabs>
+
+<Info>
+The `bufferData` flag increases memory usage slightly because the most recent value for each publication must be stored. It is disabled by default. For most dynamic federation use cases, enabling it at the federate level is the right choice so all publications automatically participate.
+</Info>
+
+## Observer federates
+
+An observer federate declares up front that it will only receive data, not publish any. Because it has no data that other federates depend on, it introduces no timing dependency and can safely join at any point during execution.
+
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    FederateInfo fi;
+    fi.observer = true;
+    ```
+  </Tab>
+  <Tab title="C">
+    ```c
+    helicsFederateInfoSetFlagOption(fi, HELICS_FLAG_OBSERVER, HELICS_TRUE, &err);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import helics as h
+
+    fi = h.helicsCreateFederateInfo()
+    h.helicsFederateInfoSetFlagOption(fi, h.HELICS_FLAG_OBSERVER, True)
+    ```
+  </Tab>
+</Tabs>
+
+The observer flag can also be set on the command line:
+
+```bash
+my_federate --observer
+```
+
+<Note>
+If you create a HELICS core before creating the observer federate, the core itself must also be created with the observer flag enabled.
+</Note>
+
+### Behavior of observer federates
+
+After calling `helicsFederateEnterExecutingMode()`, the time returned to an observer federate is not necessarily zero—it reflects the current time of the federates whose publications the observer has subscribed to. To read the current simulation time after joining, use `helicsFederateGetCurrentTime()`.
+
+Each time an observer connects it must use a unique name. Observer federates are particularly useful for:
+
+- Monitoring a running co-simulation without disturbing its timing
+- Debugging by sampling the current state of all publications
+- Generating diagnostic snapshots mid-simulation
+
+## Adding federates after federation start
+
+Full dynamic federations (level 4) are supported as of HELICS v3.4. With `--dynamic` set on the broker, any federate may join after `helicsFederateEnterExecutingMode()` has been called by the initial set of federates.
+
+The late-joining federate goes through the same initialization sequence as any other federate, but the time returned when it enters executing mode reflects the current federation time rather than zero. Publications made by the late-joining federate become visible to other federates at the next time step after the late-joining federate enters executing mode.
+
+<Warning>
+If the root broker was not started with `--dynamic`, late-joining federates will receive an error indicating the federation is not accepting new members. The `--dynamic` flag must be set before the co-simulation starts.
+</Warning>
+
+## Dynamic publication and endpoint registration
+
+As of HELICS v3.4, existing federates can register new publications, endpoints, or filters after execution has begun (level 3). The new interfaces become visible to the rest of the federation at the next time request made by other federates after the registration occurs. No values published through a dynamically created publication will be seen by subscribers until after their next time request is granted following the registration.
+
+## Reentrant federates
+
+Introduced in HELICS v3.5.1, reentrant federates can disconnect from the federation and rejoin with the same name later. This requires:
+
+1. The root broker to have `--dynamic` set.
+2. The federate to be created with `--reentrant`.
+
+```bash
+my_federate --reentrant
+```
+
+Interfaces that should automatically reconnect when the reentrant federate rejoins with the same interface name can use the `HELICS_OPTION_FLAG_RECONNECTABLE` option. When the reentrant federate reconnects, whether on the same core or a different one, it is treated as a fresh dynamic federate in terms of timing. It does not inherit any properties from its previous incarnation other than its name.
+
+## Use cases for dynamic federations
+
+<CardGroup cols={2}>
+  <Card title="EV charging simulations" icon="bolt">
+    Vehicle federates join when charging begins and leave when charging ends, modeling fleets with asynchronous participation patterns.
+  </Card>
+  <Card title="Hardware in the loop" icon="cpu">
+    Physical hardware components that come online during the run join the federation dynamically rather than requiring the co-simulation to restart.
+  </Card>
+  <Card title="Real-time monitoring" icon="activity">
+    Observer federates attach to a running federation to collect diagnostic data without modifying simulation timing.
+  </Card>
+  <Card title="Sensitivity analysis" icon="chart-bar">
+    New federates representing additional scenarios or parameter sweeps join an ongoing run rather than requiring separate federation launches.
+  </Card>
+</CardGroup>

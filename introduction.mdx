@@ -1,0 +1,73 @@
+---
+title: "Introduction to HELICS Co-Simulation Framework"
+description: "Learn what HELICS is, the problem it solves, and when to use it — covering the federate-broker model, multi-language support, and scalability."
+---
+
+HELICS (Hierarchical Engine for Large-scale Infrastructure Co-Simulation) is a general-purpose, modular co-simulation framework that enables multiple existing simulation tools to exchange data and stay synchronized in time. Rather than requiring you to build one large monolithic simulator, HELICS lets you connect independent tools — each called a **federate** — into a coordinated **federation**. Together, the federates form a single large simulation without any individual tool needing to be modified to understand the others.
+
+HELICS is not a simulator itself. It cannot model physical systems on its own. What it does is make it straightforward to take simulation tools that already exist and connect them so they run together in a time-synchronized way. As the HELICS team puts it: "Simulations are better together."
+
+## What problem does HELICS solve?
+
+Complex engineered systems rarely fall within a single simulation domain. A modern electric power system, for example, involves transmission networks, distribution grids, communication and control systems, energy markets, and increasingly, transportation and building loads. Each of these domains has mature, validated simulation tools developed over decades by domain experts. Rebuilding all that functionality into a single tool is not feasible — and would risk discarding the validated physics each tool encodes.
+
+HELICS provides the integration layer that lets these tools communicate. Each simulator connects to HELICS through a lightweight API (or a pre-built language binding), registers the signals it produces and consumes, and then runs its own time loop while HELICS handles routing data between simulators and keeping them synchronized. You do not need to change how any simulator works internally.
+
+## Core concepts: federates, federations, and brokers
+
+The HELICS model is built on three key concepts:
+
+- **Federate**: A running instance of a simulator that has been connected to HELICS. Each federate registers the values it publishes and the values it subscribes to, then participates in time-synchronized data exchange with other federates.
+- **Federation**: The collective of all federates working together in one co-simulation. The federation runs as a coordinated whole even though each federate is a separate process, possibly running on a different machine.
+- **Broker**: The executable distributed with HELICS that routes data between federates. Every federate connects to a broker to join the federation. Brokers can be organized in hierarchies for large-scale simulations, with a root broker at the top acting as the message router of last resort.
+
+Data flows between federates through **interfaces**: publications (outputs), subscriptions (inputs), and endpoints (for message-based communication). Federates are designed to be autonomous — one federate cannot impose requirements on another, and each controls its own time management.
+
+## Key capabilities
+
+- **Multi-language support**: HELICS provides bindings for C++, C, Python (pyhelics), Java, MATLAB, Octave, Julia, and nim. Federates written in different languages interoperate transparently within the same federation.
+- **Massive scalability**: The same framework runs on two federates sharing a laptop and on 100,000+ federates spread across supercomputers, cloud instances, and mixed environments.
+- **Domain-agnostic design**: Although HELICS originated in the energy domain (transmission, distribution, communications, markets, transportation, buildings), it can be used to co-simulate any collection of tools that provides a scripting interface or source code access.
+- **Multiple communication protocols**: HELICS supports ZeroMQ (the default), TCP, MPI, and other core types, making it possible to match the transport layer to your network environment.
+- **Flexible timing**: Each federate controls its own time step and update rate. HELICS manages the global synchronization so that no federate advances past a point where it is missing data it needs.
+
+## When to use HELICS
+
+HELICS is a good fit when:
+
+- You need to combine two or more existing simulation tools that each model part of a larger system.
+- The tools you want to combine are written in different languages or run as separate executables.
+- You need your co-simulation to scale beyond what a single machine can support.
+- You want to reuse validated, domain-specific simulators rather than rebuilding their physics elsewhere.
+
+HELICS is not a good fit when:
+
+- You need a single-domain simulator (just use that domain's best tool directly).
+- All of your simulation logic can be expressed in one program without interoperability requirements.
+- Your coupling is so tight that the overhead of inter-process communication would dominate run time.
+
+## Key features at a glance
+
+- Connect heterogeneous simulators without modifying them
+- Language bindings for Python, C++, C, Java, Julia, MATLAB, Octave, and nim
+- Scales from two federates on a laptop to 100,000+ on supercomputers
+- ZeroMQ, TCP, and MPI transport options
+- Value-based (publications/subscriptions) and message-based (endpoints) communication
+- JSON-based federate configuration — no recompilation needed to change connections
+- Helper apps: Broker, Player, Recorder, and a general App executable
+- BSD-3-Clause open source license
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation/index">
+    Install HELICS on Linux, macOS, or Windows using pip, conda, or pre-compiled binaries.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first two-federate battery and charger co-simulation.
+  </Card>
+  <Card title="Co-simulation overview" icon="diagram-project" href="/concepts/co-simulation-overview">
+    Understand the co-simulation model and how HELICS implements it.
+  </Card>
+  <Card title="Federates" icon="circle-nodes" href="/concepts/federates">
+    Learn how federates register interfaces, manage time, and exchange data.
+  </Card>
+</CardGroup>

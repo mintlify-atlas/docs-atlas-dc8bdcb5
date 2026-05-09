@@ -1,0 +1,333 @@
+---
+title: 'Orchestrating HELICS Co-simulations on HPC Systems'
+description: 'Automate co-simulation startup with helics-cli runner files, manage workflows with Merlin on HPC, handle timeouts, profiling, and clean shutdown.'
+keywords: ['orchestration', 'helics-cli', 'runner json', 'Merlin', 'HPC', 'profiling', 'program termination', 'timeouts']
+---
+
+Launching a HELICS co-simulation involves starting multiple independent processes—at least one broker and one or more federates—in the right order, with the right arguments, and often across multiple compute nodes. For small co-simulations this can be done manually from the command line; for larger ones running on high-performance computing (HPC) clusters, or for automated sweeps over many parameter combinations, a dedicated orchestration layer is needed. HELICS provides built-in tooling for local orchestration through `helics-cli` and integrates with the Merlin workflow system for HPC deployments.
+
+## Running multiple federates together with helics-cli
+
+The `helics run` command (part of `pyhelics`) reads a JSON runner file that describes all the federates in a co-simulation and launches them together. This eliminates the need to open separate terminal windows or write custom shell scripts for every co-simulation.
+
+### Runner JSON format
+
+A runner file describes the name of the federation and lists each federate as an object with the command to execute, the working directory, and the target host:
+
+```json
+{
+  "federates": [
+    {
+      "directory": ".",
+      "exec": "helics_broker -f2 --loglevel=warning",
+      "host": "localhost",
+      "name": "broker"
+    },
+    {
+      "directory": ".",
+      "exec": "python3 -u pisender.py",
+      "host": "localhost",
+      "name": "pisender"
+    },
+    {
+      "directory": ".",
+      "exec": "python3 -u pireceiver.py",
+      "host": "localhost",
+      "name": "pireceiver"
+    }
+  ],
+  "name": "pi-exchange"
+}
+```
+
+### Launching a co-simulation
+
+```bash
+helics run --path=runner.json
+```
+
+The runner launches all listed processes and waits for them to complete. Log output from each federate is captured and displayed.
+
+<Note>
+The broker should always appear first in the `federates` list, or at minimum be launched before the federates that connect to it. HELICS federates retry connections for the duration of the connection timeout (default 30 seconds), but starting the broker first avoids unnecessary retries.
+</Note>
+
+## Orchestration with Merlin on HPC systems
+
+[Merlin](https://github.com/LLNL/merlin) is a distributed task queuing system designed for HPC workflows. It can interface with SLURM and Flux resource managers, handle resource allocation automatically, and run large numbers of co-simulations in parallel or in sequence. Within a Merlin workflow, individual HELICS co-simulations are launched via `helics run`.
+
+### Why use Merlin with HELICS
+
+- Automatic resource allocation on HPC clusters via SLURM or Flux—you specify the number of nodes needed, Merlin handles the scheduler.
+- Complex workflows with analysis steps: run a co-simulation, analyze results, conditionally launch a follow-up co-simulation with updated inputs.
+- Parallel execution of many co-simulations (for example, sensitivity analysis or Monte Carlo sweeps) without manually managing job submissions.
+
+### Merlin specification structure
+
+A Merlin spec is a YAML file organized into sections. The key sections for a HELICS workflow are:
+
+**`description`** — name and summary of the study:
+
+```yaml
+description:
+  name: Test helics
+  description: Juggle helics data
+```
+
+**`env`** — environment variables used throughout the spec. Here `N_SAMPLES` controls how many federate pairs to create:
+
+```yaml
+env:
+  variables:
+    OUTPUT_PATH: ./helics_juggle_output
+    N_SAMPLES: 8
+```
+
+**`merlin`** — the input-generation step. This calls a Python script to produce one runner JSON file per co-simulation instance, and writes the filenames to `samples.csv`:
+
+```yaml
+merlin:
+  samples:
+    generate:
+      cmd: |
+        python3 $(SPECROOT)/make_samples.py $(N_SAMPLES) $(MERLIN_INFO)
+        cp $(SPECROOT)/pireceiver.py $(MERLIN_INFO)
+        cp $(SPECROOT)/pisender.py $(MERLIN_INFO)
+    file: samples.csv
+    column_labels: [FED]
+```
+
+Each generated runner JSON file describes a single co-simulation instance, for example:
+
+```json
+{
+  "federates": [
+    {
+      "directory": ".",
+      "exec": "python3 -u pisender.py 0",
+      "host": "localhost",
+      "name": "pisender0"
+    }
+  ],
+  "name": "pisender0"
+}
+```
+
+**`study`** — the execution steps. Each step has a name and a `run` block. The `FED` variable resolves to each row from `samples.csv` so the launch command runs once per co-simulation instance:
+
+```yaml
+study:
+  - name: start_federates
+    description: Launch all co-simulation instances
+    run:
+      cmd: |
+        spack load helics
+        helics run --path=$(FED)
+        echo "DONE"
+  - name: cleanup
+    description: Remove generated input files
+    run:
+      cmd: rm $(SPECROOT)/samples.csv
+      depends: [start_federates_*]
+```
+
+The study steps form a directed acyclic graph (DAG). The `cleanup` step depends on all `start_federates` instances completing first.
+
+## Sequencing federate startup
+
+When launching without an orchestration tool, the order of startup matters:
+
+<Steps>
+  <Step title="Launch the broker first">
+    The broker must be running before any federate tries to connect:
+    ```bash
+    helics_broker -f3 --loglevel=warning &
+    ```
+  </Step>
+  <Step title="Launch federates">
+    Start each federate process. Federates retry connecting to the broker for up to the connection timeout (default 30 seconds):
+    ```bash
+    python3 federate_a.py &
+    python3 federate_b.py &
+    python3 federate_c.py &
+    ```
+  </Step>
+  <Step title="Wait for all processes to complete">
+    Use `wait` in bash or your job scheduler to hold until all processes exit, then check exit codes to detect failures.
+  </Step>
+</Steps>
+
+## Handling timeouts
+
+HELICS has several timeout mechanisms to prevent co-simulations from hanging indefinitely.
+
+### Connection timeout
+
+Controls how long a federate waits to establish a connection to the broker. The default is 30 seconds:
+
+```bash
+helics_broker -f3 --timeout=60s
+```
+
+For large co-simulations where many federates are starting simultaneously and contending for network resources, increase this value.
+
+### Heartbeat and federate timeout
+
+A heartbeat timer (`--tick`) runs in the background of every broker and core. If no communication is received within one tick, a ping is sent. If there is no response within a further period, an error is raised and the co-simulation is terminated:
+
+```bash
+helics_broker -f3 --tick=5s
+```
+
+If a federate is being stepped through a debugger and will be slow to respond, use `--slowresponding` to prevent it from being treated as failed:
+
+```bash
+my_federate --slowresponding
+```
+
+The `--debugging` flag is shorthand for `--slowresponding --disable_timer` and is intended for interactive debugging sessions.
+
+### Grant timeout
+
+At the federate level, `--granttimeout` triggers diagnostic output if a time grant takes longer than expected. This does not terminate the co-simulation but produces warnings:
+
+- At 1× the timeout: a warning message is printed.
+- At 3× the timeout: a resend of timing messages is requested.
+- At 6× the timeout: full timing diagnostics are printed.
+- At 10× the timeout: additional warnings are generated.
+
+### Maximum co-simulation duration
+
+To cap the total wall-clock runtime of a co-simulation (useful in automated batch runs):
+
+```bash
+helics_broker -f3 --maxcosimduration=2hours
+```
+
+If the co-simulation exceeds this duration it is terminated automatically, preventing a single hung run from blocking subsequent jobs.
+
+## Profiling and timing analysis
+
+HELICS includes a profiling capability (available since version 2.8/3.0.1) that records timestamps when federates enter and exit HELICS blocking call loops. This identifies which federates are spending the most wall-clock time waiting on others.
+
+### Enabling profiling
+
+Profiling can be enabled at the broker, core, or federate level. Enabling it at a higher level automatically propagates to all children.
+
+**Broker-level** (propagates to all cores and federates):
+
+```bash
+# Write profiling output to a file
+helics_broker -f3 --profiler=profile_output.txt
+
+# Append to an existing file
+helics_broker -f3 --profiler_append=profile_output.txt
+
+# Write to the standard log
+helics_broker -f3 --profiler=log
+```
+
+**Core-level** (via the `coreinitstring`):
+
+```bash
+my_federate --coreinitstring="--profiler=core_profile.txt"
+```
+
+**Federate-level** (programmatic, C API):
+
+```c
+helicsFederateSetFlagOption(fed, HELICS_FLAG_PROFILING, HELICS_TRUE, &err);
+
+// Capture profiling output in the federate's own log instead of forwarding to broker
+helicsFederateSetFlagOption(fed, HELICS_FLAG_LOCAL_PROFILING_CAPTURE, HELICS_TRUE, &err);
+```
+
+Or via command line / configuration file flags:
+
+```bash
+my_federate --flags=profiling,local_profiling_capture
+```
+
+### Reading profiling output
+
+Each profiling message is wrapped in XML-like tags:
+
+```text
+<PROFILING>test1[131072](executing)HELICS CODE ENTRY<138286445272500>[t=0]</PROFILING>
+<PROFILING>test1[131072](executing)HELICS CODE EXIT<138286445241300>[t=0]</PROFILING>
+```
+
+The format is:
+
+```
+FederateName[FederateID](federateState)MESSAGE<wall-clock-nanoseconds>[simulation-time]
+```
+
+- `HELICS CODE ENTRY`: the federate is entering a HELICS blocking call (waiting for a time grant).
+- `HELICS CODE EXIT`: the federate has received its time grant and is returning to user code.
+- `MARKER`: a calibration timestamp that pairs the local system uptime with global wall-clock time, enabling correlation across multiple machines.
+
+The difference between consecutive `HELICS CODE ENTRY` and `HELICS CODE EXIT` timestamps for the same federate shows how long that federate waited for a time grant at each step.
+
+<Info>
+Timestamps are nanosecond-precision monotonic clock values (system uptime). Because different machines have different uptimes, the `MARKER` messages provide a reference to calibrate across compute nodes. Network latency between nodes means cross-machine timestamp alignment is only accurate to microsecond or millisecond precision depending on network conditions.
+</Info>
+
+## Program termination patterns
+
+### Clean shutdown
+
+The normal termination path is for each federate to call `helicsFederateFinalize()` after completing its last time step, then call `helicsFederateFree()` and `helicsCloseLibrary()`. When all federates have finalized, the broker shuts down automatically.
+
+### Ctrl-C handling
+
+For C and C++ programs, `Ctrl-C` terminates the local process. For distributed co-simulations this leaves other processes running—they will either time out (if timeouts are enabled) or deadlock.
+
+The C shared library provides signal handler utilities:
+
+```c
+// Install a signal handler that shuts down all known HELICS objects and exits
+helicsLoadSignalHandler();
+
+// Threaded version: executes the shutdown in a new thread so the main thread
+// can continue (used by the Python API)
+helicsLoadThreadedSignalHandler();
+
+// Clear previously installed HELICS signal handlers
+helicsClearSignalHandler();
+```
+
+A custom callback can also be inserted into the signal handler chain:
+
+```c
+// callback returns HELICS_TRUE to let the default handler run afterward,
+// or HELICS_FALSE to suppress it
+helicsLoadSignalHandlerCallback(my_cleanup_callback, HELICS_FALSE);
+```
+
+<Warning>
+Signal handlers use constructs (atomics, mutexes) that are not technically safe in signal handlers. They work in the vast majority of cases for the primary use case of process termination, but reliability is not guaranteed.
+</Warning>
+
+### Generating a global error
+
+Any component can trigger immediate federation-wide termination by generating a global error:
+
+```c
+// Terminate from a federate
+helicsFederateGlobalError(fed, errorCode, "description of the error");
+
+// Terminate from a core
+helicsCoreGlobalError(core, errorCode, "description", &err);
+
+// Terminate from a broker
+helicsBrokerGlobalError(broker, errorCode, "description", &err);
+```
+
+To escalate any local error (such as a configuration mismatch) into a global error automatically:
+
+```c
+helicsFederateInfoSetFlagOption(fi, HELICS_TERMINATE_ON_ERROR, HELICS_TRUE, &err);
+```
+
+The `--errortimeout` option (default 10 seconds) controls how long the system waits after a global error before tearing down the co-simulation network, giving time for diagnostic queries.

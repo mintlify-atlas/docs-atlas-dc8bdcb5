@@ -1,0 +1,336 @@
+---
+title: "Installing HELICS on Linux, macOS, and Windows"
+description: "Install HELICS via pip, conda, Spack, or pre-compiled binaries. Language bindings for Python, Julia, Java, and MATLAB. Includes Docker and build-from-source."
+---
+
+HELICS can be installed in several ways depending on which language you plan to use and whether you need the core C/C++ library, a specific language binding, or the full HELICS toolchain. The most common path for Python users is a single `pip install` command. C and C++ users can download pre-compiled binaries from GitHub releases or build from source. This page covers all supported installation methods across platforms.
+
+<Note>
+  You need an internet connection to download HELICS. As of HELICS v3, the only supported language bindings included with the core C/C++ library downloads are C and C++98 (plus C++17 when building from source). Language bindings for Python, Julia, Java, and MATLAB are installed separately through their own package managers or build steps.
+</Note>
+
+## Recommended: Python install via pip
+
+For most users, installing the Python binding is the fastest way to get started and gives you access to `helics_broker` and the HELICS CLI runner tool:
+
+```bash
+pip install 'helics[cli]'
+```
+
+The `[cli]` extra installs the optional but recommended `helics_cli` runner, which is used in the HELICS user guide examples to launch federations from a single command. If you only need the Python API without the runner:
+
+```bash
+pip install helics
+```
+
+Both commands work on supported versions of Windows, macOS, and Linux. See the [HELICS PyPI page](https://pypi.org/project/helics/) for the full list of supported platforms.
+
+## Platform-specific installation
+
+<Tabs>
+  <Tab title="Linux">
+    ### Install via pip (recommended)
+
+    ```bash
+    pip install 'helics[cli]'
+    ```
+
+    ### Install via Spack (HPC environments)
+
+    Spack is the recommended install method for high-performance computing clusters where you need fine-grained control over dependencies:
+
+    ```bash
+    spack install helics
+    ```
+
+    To enable MPI support:
+
+    ```bash
+    spack install helics +mpi
+    ```
+
+    To see all available build options:
+
+    ```bash
+    spack info helics
+    ```
+
+    ### Build from source (Ubuntu 22.04+)
+
+    Building from source requires:
+    - GCC 11 or clang 15 (C++20 support)
+    - CMake 3.22 or newer
+    - Boost 1.73 or newer
+    - ZeroMQ 4.2 or newer
+
+    Install dependencies:
+
+    ```bash
+    sudo apt install libboost-dev libzmq5-dev git cmake-curses-gui
+    ```
+
+    Clone and build:
+
+    ```bash
+    git clone https://github.com/GMLC-TDC/HELICS
+    cd HELICS
+    mkdir build && cd build
+    cmake ../
+    make
+    make install
+    ```
+
+    Verify the installation:
+
+    ```bash
+    helics_broker --version
+    ```
+  </Tab>
+
+  <Tab title="macOS">
+    ### Install via pip (recommended)
+
+    ```bash
+    pip install 'helics[cli]'
+    ```
+
+    ### Build from source
+
+    Building from source requires:
+    - Xcode 14 or higher (C++20 support via clang)
+    - CMake 3.22 or newer
+    - Boost 1.73 or newer
+    - ZeroMQ 4.2 or newer
+
+    Install dependencies with Homebrew:
+
+    ```bash
+    brew install boost zeromq cmake
+    ```
+
+    Clone and build:
+
+    ```bash
+    git clone https://github.com/GMLC-TDC/HELICS
+    cd HELICS
+    mkdir build && cd build
+    cmake ../
+    make
+    make install
+    ```
+
+    Verify the installation:
+
+    ```bash
+    helics_broker --version
+    ```
+
+    <Note>
+      If you want to install to a custom location, add `-DCMAKE_INSTALL_PREFIX=/path/to/install/folder` to your `cmake` command. You will then need to add the resulting `bin` subdirectory to your `PATH` to run HELICS commands from any directory.
+    </Note>
+  </Tab>
+
+  <Tab title="Windows">
+    ### Download a pre-compiled installer
+
+    Windows installers and zip archives are available with each HELICS release on GitHub. The release includes:
+    - A Windows installer with HELICS apps and shared library
+    - Static library archives for multiple Visual Studio versions (Debug and Release)
+    - A zip archive with just the C shared library and headers for third-party interfaces
+
+    Download the latest release from the [HELICS GitHub releases page](https://github.com/GMLC-TDC/HELICS/releases).
+
+    ### Install via pip
+
+    ```bash
+    pip install 'helics[cli]'
+    ```
+
+    If you see a `DLL load failed` error after installing via pip, you likely need to install the [Visual C++ Redistributable](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads). The missing DLL is most commonly `vcruntime140_1.dll`.
+
+    ### Install via MSYS2 (Pacman)
+
+    From the MINGW64 shell:
+
+    ```bash
+    pacman -Sy mingw64/mingw-w64-x86_64-helics
+    ```
+
+    Verify:
+
+    ```bash
+    helics_broker --version
+    ```
+
+    ### Build from source
+
+    Building from source on Windows requires:
+    - Microsoft Visual C++ 2019 or newer
+    - CMake 3.22 or newer
+    - Boost 1.75 or newer
+    - git
+
+    See the [detailed Windows build instructions](/installation/index#build-from-source-windows) in the source documentation for the full Visual Studio build procedure.
+  </Tab>
+</Tabs>
+
+## Package manager install commands
+
+<CodeGroup>
+
+```bash pip
+pip install 'helics[cli]'
+```
+
+```bash conda
+conda install -c gmlc-tdc helics
+```
+
+```bash spack
+spack install helics
+```
+
+</CodeGroup>
+
+## Pre-compiled binaries
+
+Pre-compiled binaries for Linux, macOS, and Windows are available from the [HELICS GitHub releases page](https://github.com/GMLC-TDC/HELICS/releases). Each release provides:
+
+- Zip archives with static libraries for multiple Visual Studio versions on Windows
+- A Windows installer with HELICS apps and the shared library
+- A C shared library archive with headers for third-party language interface builders
+
+Download the appropriate archive for your platform, extract it, and add the `bin` folder to your system `PATH`.
+
+## Docker
+
+A Docker image is available on Docker Hub with the core HELICS executables (`helics_broker`, `helics_app`, `helics_recorder`, `helics_player`, and `helics_broker_server`). This image does not include language binding libraries — it provides the apps only.
+
+```bash
+docker pull helics/helics
+docker run --rm helics/helics helics_broker --version
+```
+
+You can also build a custom Docker image with Python support using the following `Dockerfile`:
+
+```dockerfile
+FROM ubuntu:22.04 as builder
+
+WORKDIR /root/develop
+
+RUN apt update && apt install -y \
+  libzmq5-dev python3-dev \
+  libboost-all-dev \
+  build-essential swig cmake git
+
+RUN git clone --recurse-submodules \
+  https://github.com/GMLC-TDC/HELICS.git helics
+
+WORKDIR /root/develop/helics
+
+RUN cmake \
+  -DCMAKE_INSTALL_PREFIX=/helics \
+  -DCMAKE_BUILD_TYPE=Release \
+  -B build
+
+RUN cmake --build build -j -t install
+
+
+FROM ubuntu:22.04
+
+COPY --from=builder /helics /usr/local/
+
+ENV PYTHONPATH /usr/local/python
+
+RUN apt update && apt install -y --no-install-recommends \
+  libboost-filesystem1.74.0 libboost-program-options1.74.0 \
+  libboost-test1.74.0 libzmq5 pip python3-dev
+
+RUN pip install helics
+
+CMD ["python3", "-c", "import helics; print(helics.helicsGetVersion())"]
+```
+
+Build and run:
+
+```bash
+docker build -t helics .
+docker run -it --rm helics
+```
+
+## Language bindings
+
+HELICS provides official language bindings beyond the core C and C++ library. Each binding is maintained in its own repository and installed through the language's native package manager.
+
+### Python (pyhelics)
+
+```bash
+pip install helics
+```
+
+The Python binding is the most commonly used interface and is maintained in the [pyhelics repository](https://github.com/GMLC-TDC/pyhelics). It includes the full HELICS API plus the optional CLI runner when installed with `pip install 'helics[cli]'`.
+
+### Julia
+
+```julia
+pkg> add HELICS
+```
+
+The Julia binding is available in the [HELICS.jl repository](https://github.com/GMLC-TDC/HELICS.jl).
+
+### MATLAB and Octave
+
+The MATLAB and Octave interfaces are available in the [matHELICS repository](https://github.com/GMLC-TDC/matHELICS). Follow the installation instructions in the matHELICS README.
+
+<Note>
+  The Octave interface requires Octave 8.3 or newer for mex file support.
+</Note>
+
+### Java (jHELICS)
+
+Java support is built from source with the CMake option `HELICS_BUILD_JAVA_INTERFACE=ON`:
+
+```bash
+cmake -DHELICS_BUILD_JAVA_INTERFACE=ON ../
+make && make install
+```
+
+### C# 
+
+C# support requires SWIG and is built from source with `HELICS_BUILD_CSHARP_INTERFACE=ON`. Install SWIG first:
+
+```bash
+pip install swig
+```
+
+Then build HELICS:
+
+```bash
+cmake -DHELICS_BUILD_CSHARP_INTERFACE=ON ../
+make && make install
+```
+
+## Verification
+
+After installation, verify that HELICS is working by checking the broker version:
+
+```bash
+helics_broker --version
+```
+
+You should see output like:
+
+```
+3.x.x (20XX-XX-XX)
+```
+
+For Python, verify the binding:
+
+```python
+import helics
+print(helics.helicsGetVersion())
+```
+
+## Running an example
+
+Once installed, the [Quickstart](/quickstart) walks through running a two-federate battery and charger co-simulation as a practical test of your installation.

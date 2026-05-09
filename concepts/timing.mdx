@@ -1,0 +1,192 @@
+---
+title: 'HELICS Time Management: Requests, Grants, and Config'
+description: 'How HELICS synchronizes simulated time across a federation using time requests, grants, and properties like period, offset, timeDelta, and uninterruptible.'
+keywords: ['timing', 'time synchronization', 'time request', 'time grant', 'period', 'offset', 'timeDelta', 'uninterruptible', 'HELICS']
+---
+
+One of the two fundamental responsibilities of a co-simulation framework is keeping all running simulators synchronized in time. Without coordination, a fast simulator could advance days ahead in simulated time while a slower one is still at the beginning, making any data exchange between them causally meaningless. HELICS solves this problem through a **time request and grant** mechanism: each federate explicitly requests the next simulated time it needs, and HELICS—through its core and broker—determines the globally safe time to grant, ensuring that no federate is ever asked to simulate a point in the past.
+
+## How time requests work
+
+After entering execution mode, each federate enters a loop where it performs its calculations, publishes outputs, and then calls a HELICS time-request function to advance to the next step:
+
+```python
+import helics as h
+
+t = h.helicsFederateRequestTime(fed, requested_time)
+```
+
+This call **blocks**. The federate suspends execution and waits for HELICS to return a granted time. During this wait, other federates in the federation continue their own execution. Once HELICS determines that granting the requested time is safe—meaning no other federate will produce an output destined for this federate at a time earlier than what is being granted—it wakes the federate with the granted time value.
+
+The granted time will be one of two values:
+
+- **The requested time** (or the next valid time given the federate's configuration), when no earlier inputs have arrived.
+- **An earlier valid time**, when another federate has published a new value or sent a message at a time before the requested time. Being granted an earlier time always means new data is waiting to be processed.
+
+<Note>
+A federate is never granted a time earlier than its last granted time. Time only moves forward. HELICS does provide advanced configurations for situations requiring iteration at the same time step, but these are exceptional and require all affected federates to support non-monotonic time.
+</Note>
+
+## The time request loop
+
+In a typical fixed-time-step federate, the execution loop follows this pattern:
+
+```python
+import helics as h
+
+# Enter execution; all federates synchronize here
+h.helicsFederateEnterExecutingMode(fed)
+
+t = 0.0
+end_time = 3600.0  # one hour of simulation time
+dt = 1.0           # one-second time step
+
+while t < end_time:
+    # 1. Request the next time step
+    t = h.helicsFederateRequestTime(fed, t + dt)
+
+    # 2. Read all inputs granted at this time
+    value = h.helicsInputGetDouble(sub)
+
+    # 3. Run internal simulation logic
+    new_output = compute(value, t)
+
+    # 4. Publish outputs for other federates to receive
+    h.helicsPublicationPublishDouble(pub, new_output)
+
+# Signal departure from the federation
+h.helicsFederateFinalize(fed)
+```
+
+Event-driven federates that react to inputs rather than advancing at fixed intervals often request `HELICS_TIME_MAXTIME`. They are granted a time only when another federate produces an output that requires their attention:
+
+```python
+while True:
+    # Request the end of time; wake up only when inputs arrive
+    t = h.helicsFederateRequestTime(fed, h.HELICS_TIME_MAXTIME)
+
+    if t >= end_time:
+        break
+
+    # Process new inputs that triggered this grant
+    process_inputs(fed, t)
+    send_control_signals(fed, t)
+```
+
+## Timing configuration properties
+
+HELICS provides a set of timing properties, configurable via JSON or the API, that control when a federate may be granted a time. All time values are in seconds unless specified otherwise.
+
+### Core timing properties
+
+<AccordionGroup>
+  <Accordion title="period">
+    Restricts time grants to multiples of the specified interval. If `period` is `1.0`, the federate can only be granted times of 1.0, 2.0, 3.0, and so on. This is the primary mechanism for enforcing a fixed simulation time step, tying the HELICS interface to the natural time resolution of the underlying simulator.
+
+    ```json
+    { "period": 0.001 }
+    ```
+
+    The granted time will satisfy `t = n * period + offset` for some non-negative integer `n`.
+  </Accordion>
+  <Accordion title="offset">
+    Shifts all time grants by a fixed amount relative to the intervals defined by `period`. If `period` is `1.0` and `offset` is `0.5`, the federate will be granted times of 0.5, 1.5, 2.5, and so on.
+
+    Offset is useful for staggering federates that share the same time step so that the outputs of one are always available as inputs to the other at each step.
+
+    ```json
+    { "period": 1.0, "offset": 0.5 }
+    ```
+  </Accordion>
+  <Accordion title="timeDelta">
+    Sets a minimum interval between consecutive grants. After being granted a time `t`, the federate will not be granted any time earlier than `t + timeDelta`, regardless of other timing settings. This is useful for modeling computational or communication latency.
+
+    ```json
+    { "time_delta": 0.00001 }
+    ```
+  </Accordion>
+  <Accordion title="maxIterations">
+    Controls how many times a federate may iterate at the same simulated time step during initialization or execution. Relevant when the federation needs to converge on a consistent state at a single time point before advancing.
+
+    ```json
+    { "maxIterations": 10 }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Interrupt flags
+
+<AccordionGroup>
+  <Accordion title="uninterruptible">
+    By default (`"uninterruptible": false`), HELICS will grant a federate a time earlier than requested if new inputs arrive at that earlier time. This is the "interruptible" mode and is appropriate for federates that want to react immediately to every new input they receive.
+
+    Setting `"uninterruptible": true` forces HELICS to always grant exactly the requested time (or the next valid time given `period` and `offset`). Use this for federates that should advance at a fixed cadence regardless of incoming signals—for example, a data logger that writes values at regular intervals.
+
+    ```json
+    { "uninterruptible": true }
+    ```
+  </Accordion>
+  <Accordion title="wait_for_current_time_update">
+    When multiple federates are granted the same simulated time, there is a risk that one federate will compute its outputs based on the previous time step's data from a peer that has not yet executed at the current time. Setting `"wait_for_current_time_update": true` forces this federate to be the last one granted a given time, after all other federates at that time have already requested a future time.
+
+    This guarantees the federate sees the most up-to-date outputs from all other federates at each time step—at the cost of being unable to publish outputs that others could use at the same time.
+
+    ```json
+    { "wait_for_current_time_update": true }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## JSON timing configuration
+
+All timing properties can be specified in the same JSON configuration file used for publications, subscriptions, and endpoints:
+
+```json
+{
+  "name": "generic_federate",
+  "period": 1.0,
+  "offset": 0.0,
+  "time_delta": 0.0,
+  "uninterruptible": false,
+  "wait_for_current_time_update": false
+}
+```
+
+## Example: Timing in a small federation
+
+Consider a federation with four federates:
+
+- **Logger** — Records values every 1 ms. Uses `period = 0.001` and `uninterruptible = true` so it advances at a fixed cadence.
+- **Power System** — Classic dynamics simulator with a 1 ms fixed time step. Sets `uninterruptible = true` and hard-codes time requests to increment by 1 ms.
+- **Generator** — Models machine dynamics valid at 0.1 ms resolution. Uses `period = 0.001` and `offset = 0.0005` (0.5 ms) to ensure its calculations follow Power System outputs.
+- **Generator Controller** — Event-driven controller. Requests `HELICS_TIME_MAXTIME` and is granted a time only when Power System publishes new state. Uses `time_delta = 0.00001` (0.01 ms) to model command-signal latency.
+
+```json
+{
+  "name": "GeneratorController",
+  "time_delta": 0.00001,
+  "uninterruptible": false
+}
+```
+
+With this configuration:
+
+1. At t=1 ms, Power System finishes its step and publishes new outputs.
+2. Generator Controller is granted t=1 ms immediately (it depends on nothing else that hasn't finished).
+3. Generator Controller calculates new control commands and requests `HELICS_TIME_MAXTIME` again.
+4. Due to `timeDelta`, the soonest Generator Controller can be granted next is t=1.01 ms.
+5. Generator is granted t=1.5 ms (its `offset` of 0.5 ms places it after Power System and Generator Controller).
+6. Logger is granted t=1 ms and records the values that were available—which are the outputs from the previous step since Power System's new values are not yet visible at its own current grant time.
+
+<Tip>
+The interaction between `period`, `offset`, `timeDelta`, and `uninterruptible` can be subtle. Start with the simplest configuration that captures your federate's time requirements, and add constraints only when co-simulation results reveal unexpected timing behavior.
+</Tip>
+
+## Federation termination
+
+A HELICS co-simulation ends under one of two conditions:
+
+- All federates are granted `HELICS_TIME_MAXTIME`, indicating they have all completed their work.
+- All federates signal termination by calling `helicsFederateFinalize()`.
+
+The termination cascades: once all federates on a core have finalized, the core terminates; once all cores on a broker have terminated, the broker terminates. This cleans up all HELICS processes and leaves model outputs, configuration files, and result files in place for analysis.

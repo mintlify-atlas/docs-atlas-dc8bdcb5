@@ -1,0 +1,301 @@
+---
+title: "HELICS Language Bindings: Python, Julia, Java, MATLAB"
+description: "Install and use official HELICS language bindings for Python, Julia, Java, MATLAB/Octave, C#, and Nim with installation instructions and code examples."
+keywords: ["HELICS", "Python", "Julia", "Java", "MATLAB", "pyhelics", "language bindings", "FFI"]
+---
+
+HELICS provides official language bindings for Python, Julia, Java, MATLAB/Octave, C#, and Nim. All bindings wrap the stable C shared library API (`helics.h`) using each language's native foreign function interface, so they expose the same functions as the C API with language-idiomatic naming and type conventions.
+
+Choosing a language binding does not affect co-simulation behavior. A Python federate, a C++ federate, and a Julia federate can all participate in the same federation simultaneously because all communication passes through the core and broker layer, not between language runtimes.
+
+## How language bindings work
+
+Every official binding loads `libhelics` (the compiled C shared library) at runtime and maps C function names to the host language. The binding layer is thin: it translates language-native types (Python strings, Julia arrays, Java objects) to C primitives and passes them to the underlying library. Error handling is mapped from `HelicsError` structs to language-native exceptions where applicable.
+
+```mermaid
+flowchart LR
+    P["Python / Julia / Java\nfederate code"]
+    B["Language binding\n(pyhelics, HELICS.jl, etc.)"]
+    C["libhelics C shared library\n(helics.h)"]
+    K["HELICS core / broker"]
+    P --> B --> C --> K
+```
+
+This architecture means that the full C API is available from every language binding. Where a binding provides convenience wrappers or object-oriented classes, those map directly to underlying C functions.
+
+## Python (pyhelics)
+
+pyhelics is the official Python binding. It wraps the C API using `ctypes` and `cffi` and exposes all functions with their original C names, prefixed as `helics.*`. A higher-level object-oriented interface is also available.
+
+### Installation
+
+```bash
+pip install helics
+```
+
+For development versions or special builds, the source is at [github.com/gmlc-tdc/pyhelics](https://github.com/gmlc-tdc/pyhelics).
+
+### Basic example
+
+```python
+import helics as h
+
+# Configure the federate
+fedinfo = h.helicsCreateFederateInfo()
+h.helicsFederateInfoSetCoreTypeFromString(fedinfo, "zmq")
+h.helicsFederateInfoSetTimeProperty(
+    fedinfo, h.HELICS_PROPERTY_TIME_DELTA, 1.0
+)
+
+# Create a value federate
+fed = h.helicsCreateValueFederate("pyFed", fedinfo)
+
+# Register interfaces
+pub = h.helicsFederateRegisterGlobalPublication(
+    fed, "voltage", h.HELICS_DATA_TYPE_DOUBLE, "kV"
+)
+sub = h.helicsFederateRegisterSubscription(fed, "otherFed/current", "A")
+
+# Enter co-simulation
+h.helicsFederateEnterExecutingMode(fed)
+
+current_time = 0.0
+stop_time = 10.0
+
+while current_time < stop_time:
+    current_time = h.helicsFederateRequestTime(fed, current_time + 1.0)
+
+    if h.helicsInputIsUpdated(sub):
+        value = h.helicsInputGetDouble(sub)
+        h.helicsPublicationPublishDouble(pub, value * 1.1)
+
+h.helicsFederateFinalize(fed)
+h.helicsFederateFree(fed)
+h.helicsCloseLibrary()
+```
+
+### Resources
+
+- Full API documentation: [python.helics.org](https://python.helics.org)
+- Source repository: [github.com/gmlc-tdc/pyhelics](https://github.com/gmlc-tdc/pyhelics)
+
+<Note>
+Python complex numbers are returned natively from `helicsInputGetComplex()` rather than as a two-element list. The same is true for Julia.
+</Note>
+
+## Julia (HELICS.jl)
+
+HELICS.jl wraps the C API using Julia's `Libdl` and `CBinding.jl` infrastructure. It exposes all C functions with Julia naming conventions and provides Julia-native error handling.
+
+### Installation
+
+```julia
+# In the Julia REPL:
+using Pkg
+Pkg.add("HELICS")
+```
+
+### Basic example
+
+```julia
+import HELICS as h
+
+fedinfo = h.helicsCreateFederateInfo()
+h.helicsFederateInfoSetCoreTypeFromString(fedinfo, "zmq")
+h.helicsFederateInfoSetTimeProperty(
+    fedinfo, h.HELICS_PROPERTY_TIME_DELTA, 1.0
+)
+
+fed = h.helicsCreateValueFederate("juliaFed", fedinfo)
+
+pub = h.helicsFederateRegisterGlobalPublication(
+    fed, "voltage", h.HELICS_DATA_TYPE_DOUBLE, "kV"
+)
+sub = h.helicsFederateRegisterSubscription(fed, "otherFed/current", "A")
+
+h.helicsFederateEnterExecutingMode(fed)
+
+current_time = 0.0
+stop_time = 10.0
+
+while current_time < stop_time
+    current_time = h.helicsFederateRequestTime(fed, current_time + 1.0)
+
+    if h.helicsInputIsUpdated(sub) == h.HELICS_TRUE
+        value = h.helicsInputGetDouble(sub)
+        h.helicsPublicationPublishDouble(pub, value * 1.1)
+    end
+end
+
+h.helicsFederateFinalize(fed)
+h.helicsFederateFree(fed)
+```
+
+### Resources
+
+- API documentation: [gmlc-tdc.github.io/HELICS.jl](https://gmlc-tdc.github.io/HELICS.jl/latest/api/)
+- Source repository: [github.com/gmlc-tdc/HELICS.jl](https://github.com/GMLC-TDC/HELICS.jl)
+
+## Java
+
+The Java binding is generated using SWIG and provides a Java class hierarchy over the C API. It requires building HELICS with the Java interface enabled.
+
+### Building with Java support
+
+```bash
+cmake -DHELICS_BUILD_JAVA_INTERFACE=ON ..
+make install
+```
+
+The build produces a JAR file and a native shared library (JNI wrapper) that must both be on the Java classpath and library path.
+
+### Basic example
+
+```java
+import com.java.helics.helics;
+import com.java.helics.HelicsFederate;
+import com.java.helics.HelicsPublication;
+import com.java.helics.HelicsInput;
+
+public class JavaFederate {
+    public static void main(String[] args) {
+        System.loadLibrary("JNIhelics");
+
+        long fedInfo = helics.helicsCreateFederateInfo();
+        helics.helicsFederateInfoSetCoreTypeFromString(fedInfo, "zmq", null);
+        helics.helicsFederateInfoSetTimeProperty(
+            fedInfo, helics.HELICS_PROPERTY_TIME_DELTA, 1.0, null
+        );
+
+        long fed = helics.helicsCreateValueFederate("javaFed", fedInfo, null);
+
+        long pub = helics.helicsFederateRegisterGlobalPublication(
+            fed, "voltage", helics.HELICS_DATA_TYPE_DOUBLE, "kV", null
+        );
+        long sub = helics.helicsFederateRegisterSubscription(
+            fed, "otherFed/current", "A", null
+        );
+
+        helics.helicsFederateEnterExecutingMode(fed, null);
+
+        double currentTime = 0.0;
+        while (currentTime < 10.0) {
+            currentTime = helics.helicsFederateRequestTime(
+                fed, currentTime + 1.0, null
+            );
+            if (helics.helicsInputIsUpdated(sub) == helics.HELICS_TRUE) {
+                double val = helics.helicsInputGetDouble(sub, null);
+                helics.helicsPublicationPublishDouble(pub, val * 1.1, null);
+            }
+        }
+
+        helics.helicsFederateFinalize(fed, null);
+        helics.helicsFederateFree(fed);
+    }
+}
+```
+
+## MATLAB and Octave (matHELICS)
+
+matHELICS provides HELICS bindings for both MATLAB and Octave. It exposes the full C API through MEX files and a `+helics` package namespace. The API is virtually identical to Python and Julia, including native complex number support.
+
+### Installation
+
+```matlab
+% Clone and build from source, or download pre-built binaries:
+% https://github.com/gmlc-tdc/mathelics
+addpath('/path/to/matHELICS');
+```
+
+<Note>
+The Octave interface requires Octave 8.3 or newer, which supports building with MEX files.
+</Note>
+
+### Basic example
+
+```matlab
+fedinfo = helics.helicsCreateFederateInfo();
+helics.helicsFederateInfoSetCoreTypeFromString(fedinfo, 'zmq');
+helics.helicsFederateInfoSetTimeProperty(fedinfo, ...
+    helics.HELICS_PROPERTY_TIME_DELTA, 1.0);
+
+fed = helics.helicsCreateValueFederate('matlabFed', fedinfo);
+pub = helics.helicsFederateRegisterGlobalPublication(fed, ...
+    'voltage', helics.HELICS_DATA_TYPE_DOUBLE, 'kV');
+
+helics.helicsFederateEnterExecutingMode(fed);
+
+currentTime = 0;
+while currentTime < 10
+    currentTime = helics.helicsFederateRequestTime(fed, currentTime + 1);
+    helics.helicsPublicationPublishDouble(pub, 12.47);
+end
+
+helics.helicsFederateFinalize(fed);
+helics.helicsFederateFree(fed);
+```
+
+### Resources
+
+- Source and binaries: [github.com/gmlc-tdc/mathelics](https://github.com/gmlc-tdc/mathelics)
+- Inline documentation: [source files](https://github.com/GMLC-TDC/matHELICS/tree/main/matlabBindings/%2Bhelics)
+
+### Simulink
+
+A Simulink interface is available in the [simHELICS](https://github.com/gmlc-tdc/simhelics) repository. It is built using Simulink S-functions and provides a minimalistic interface for integrating HELICS with Simulink models.
+
+## C# (experimental)
+
+C# support is generated using SWIG with the `HELICS_BUILD_CSHARP_INTERFACE=ON` CMake option. On Windows, Visual Studio will generate the appropriate project files automatically after building.
+
+### Building with C# support
+
+<Tabs>
+  <Tab title="pip install swig (cross-platform)">
+
+```bash
+pip install swig
+cmake -DHELICS_BUILD_CSHARP_INTERFACE=ON ..
+```
+
+  </Tab>
+  <Tab title="Chocolatey (Windows)">
+
+```shell
+choco install swig
+cmake -DHELICS_BUILD_CSHARP_INTERFACE=ON ..
+```
+
+  </Tab>
+</Tabs>
+
+<Warning>
+The C# binding is experimental and may change in future releases. It is not covered by the same stability guarantees as the C API or the primary language bindings.
+</Warning>
+
+## Nim (experimental)
+
+A Nim binding exists for HELICS but is experimental. Refer to the [HELICS GitHub organization](https://github.com/GMLC-TDC) for the current status and repository location.
+
+<Warning>
+The Nim binding is experimental and community-maintained. It may not expose the full C API surface.
+</Warning>
+
+## Choosing a language binding
+
+<CardGroup cols={2}>
+  <Card title="Python" icon="python" href="https://python.helics.org">
+    Best for scripting, data science workflows, and rapid prototyping. Largest user community and most complete documentation.
+  </Card>
+  <Card title="Julia" icon="code" href="https://gmlc-tdc.github.io/HELICS.jl/latest/api/">
+    Preferred for high-performance scientific computing and numerical simulations.
+  </Card>
+  <Card title="Java" icon="coffee" href="/api/c-api">
+    Suitable for enterprise simulation frameworks and tools with existing Java codebases.
+  </Card>
+  <Card title="MATLAB/Octave" icon="chart-line" href="https://github.com/gmlc-tdc/mathelics">
+    Required for integrating Simulink models or existing MATLAB simulation code.
+  </Card>
+</CardGroup>
+
+For new projects without existing language constraints, Python (pyhelics) is the recommended starting point due to its documentation, community support, and the available example federates.

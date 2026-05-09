@@ -1,0 +1,496 @@
+---
+title: "HELICS Federate JSON Configuration Options Reference"
+description: "All HELICS federate configuration options for JSON files: timing, behavior flags, publications, subscriptions, inputs, endpoints, and filter settings."
+keywords: ["HELICS", "configuration", "JSON", "federate", "timeDelta", "period", "loglevel", "publications", "subscriptions"]
+---
+
+HELICS federates support three configuration methods: direct API calls in source code, command-line flags at startup, and JSON (or TOML) configuration files. This reference covers the JSON configuration file format, which is the recommended approach for production co-simulations because it separates simulation configuration from code and produces a human-readable artifact describing the federation.
+
+To load a JSON configuration file, use one of the three config-based creation functions:
+
+```c
+HelicsFederate fed = helicsCreateValueFederateFromConfig("config.json", &err);
+HelicsFederate fed = helicsCreateMessageFederateFromConfig("config.json", &err);
+HelicsFederate fed = helicsCreateCombinationFederateFromConfig("config.json", &err);
+```
+
+Options in the JSON file use the same names as command-line flags when prefixed with `--`. Default values are shown in brackets after the option name. HELICS accepts `camelCase`, `snake_case`, and lowercase versions of most option names.
+
+## Complete example configuration
+
+The following JSON file shows the full set of configuration options with their defaults. In practice, most federates require far fewer options. Items marked `**required**` must be specified.
+
+```json
+{
+  "name": "myFederate",
+  "core_type": "zmq",
+  "core_name": "",
+  "core_init_string": "",
+  "autobroker": false,
+  "broker_key": "",
+  "connection_required": false,
+  "connection_optional": true,
+  "terminate_on_error": false,
+  "source_only": false,
+  "observer": false,
+  "dynamic": false,
+  "only_update_on_change": false,
+  "only_transmit_on_change": false,
+
+  "logfile": "output.log",
+  "log_level": "warning",
+  "file_log_level": "",
+  "console_log_level": "",
+  "force_logging_flush": false,
+  "dump_log": false,
+  "logbuffer": 10,
+
+  "uninterruptible": false,
+  "period": 0,
+  "offset": 0,
+  "time_delta": 0,
+  "input_delay": 0,
+  "output_delay": 0,
+  "real_time": false,
+  "rt_lag": 0.2,
+  "rt_lead": 0.2,
+  "rt_tolerance": 0.2,
+  "wait_for_current_time_update": false,
+  "restrictive_time_policy": false,
+  "slow_responding": false,
+  "max_iterations": 50,
+
+  "publications": [
+    {
+      "key": "voltage",
+      "type": "double",
+      "unit": "kV",
+      "global": true,
+      "only_transmit_on_change": false,
+      "buffer_data": false,
+      "connection_required": false,
+      "tolerance": -1,
+      "info": ""
+    }
+  ],
+  "subscriptions": [
+    {
+      "key": "otherFed/current",
+      "unit": "A",
+      "only_update_on_change": false,
+      "default": 0.0
+    }
+  ],
+  "inputs": [
+    {
+      "key": "voltage_in",
+      "type": "double",
+      "unit": "kV",
+      "targets": ["pub1", "pub2"],
+      "multi_input_handling_method": "average",
+      "default": 0.0
+    }
+  ],
+  "endpoints": [
+    {
+      "name": "control",
+      "type": "json",
+      "global": true,
+      "destination": "controller/receive"
+    }
+  ],
+  "filters": [
+    {
+      "name": "delay_filter",
+      "source_targets": "myFed/control",
+      "operation": "delay",
+      "properties": {
+        "name": "delay",
+        "value": 0.1
+      }
+    }
+  ]
+}
+```
+
+## General federate settings
+
+<ParamField path="body.name" type="string" required>
+  Unique name for this federate across the entire federation. HELICS uses this as the federate's address. An error occurs if two federates share the same name.
+
+  _API:_ `helicsFederateInfoSetCoreName`
+  _Alternative names:_ `-n`
+</ParamField>
+
+<ParamField path="body.core_type" type="string" default="zmq">
+  The messaging technology used to connect to the broker. Options include `zmq` (ZeroMQ, default), `tcp`, `udp`, `ipc` (interprocess, single machine only), `mpi` (HPC clusters), `test` (in-process testing), and `inproc`.
+
+  _API:_ `helicsFederateInfoSetCoreTypeFromString`
+  _Alternative names:_ `coretype`, `coreType`, `-t`
+</ParamField>
+
+<ParamField path="body.core_name" type="string">
+  Name of the core to connect to. Only relevant for `ipc` and `test` core types. HELICS auto-generates a core name when left empty.
+
+  _API:_ `helicsFederateInfoSetCoreName`
+</ParamField>
+
+<ParamField path="body.core_init_string" type="string">
+  Command-line-style string passed to the core at initialization. Use this to specify broker address (`--broker=`), ports, or profiler settings. Example: `"--broker=192.168.1.10 --brokerport=22608"`.
+
+  _API:_ `helicsFederateInfoSetCoreInitString`
+  _Alternative names:_ `coreinitstring`, `coreInitString`, `-i`
+</ParamField>
+
+<ParamField path="body.autobroker" type="boolean" default="false">
+  Automatically create a broker if one cannot be reached. Useful for single-broker simulations on a single machine. Only works for `inproc` and `test` core types.
+</ParamField>
+
+<ParamField path="body.broker_key" type="string">
+  A passphrase that federates must share to connect to the same broker. Prevents accidental cross-contamination between multiple simultaneous federations on the same hardware.
+
+  _API:_ `helicsFederateInfoSetBrokerKey`
+</ParamField>
+
+<ParamField path="body.terminate_on_error" type="boolean" default="false">
+  If true, any internal error in this federate triggers a global error and halts the entire federation.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_TERMINATE_ON_ERROR` [72]
+</ParamField>
+
+<ParamField path="body.source_only" type="boolean" default="false">
+  Indicates the federate only publishes data and has no subscriptions. HELICS can use this hint to grant time more efficiently.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_SOURCE_ONLY` [4]
+</ParamField>
+
+<ParamField path="body.observer" type="boolean" default="false">
+  Indicates the federate only subscribes to data and never publishes. HELICS uses this hint to grant time more efficiently.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_OBSERVER` [0]
+</ParamField>
+
+## Logging options
+
+<ParamField path="body.log_level" type="string" default="warning">
+  Sets the verbosity of logging output. Valid values (in increasing verbosity): `no_print`, `error`, `profiling`, `warning`, `summary`, `connections`, `interfaces`, `timing`, `data`, `debug`, `trace`.
+
+  _API:_ `helicsFederateInfoSetIntegerProperty` with `HELICS_PROPERTY_INT_LOG_LEVEL` [271]
+  _Alternative names:_ `loglevel`, `logLevel`
+</ParamField>
+
+<ParamField path="body.logfile" type="string">
+  Path to the log file. If empty, log output goes to console only.
+
+  _API:_ `helicsFederateSetLogFile`
+  _Alternative names:_ `log_file`, `logFile`
+</ParamField>
+
+<ParamField path="body.file_log_level" type="string">
+  Override the log level for the file only, independent of the console log level.
+
+  _API:_ `helicsFederateInfoSetIntegerProperty` with `HELICS_PROPERTY_INT_FILE_LOG_LEVEL` [272]
+</ParamField>
+
+<ParamField path="body.console_log_level" type="string">
+  Override the log level for console output only.
+
+  _API:_ `helicsFederateInfoSetIntegerProperty` with `HELICS_PROPERTY_INT_CONSOLE_LOG_LEVEL` [274]
+</ParamField>
+
+<ParamField path="body.force_logging_flush" type="boolean" default="false">
+  Flush the log file after every message. Prevents buffered IO from holding log messages, at the cost of slower simulation performance.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_FORCE_LOGGING_FLUSH` [88]
+</ParamField>
+
+<ParamField path="body.logbuffer" type="number" default="10">
+  When set to a positive integer, enables an in-memory circular buffer of the most recent N log messages. These can be retrieved via the `logs` query.
+
+  _API:_ `helicsFederateInfoSetIntegerProperty` with `HELICS_PROPERTY_INT_LOG_BUFFER` [276]
+</ParamField>
+
+## Timing options
+
+<ParamField path="body.period" type="number" default="0">
+  Forces time grants to occur at multiples of this period (in seconds). Setting a period effectively makes the federate uninterruptible between periods. Supports unit strings: `"1 ms"`, `"0.5 s"`.
+
+  _API:_ `helicsFederateInfoSetTimeProperty` with `HELICS_PROPERTY_TIME_PERIOD` [140]
+</ParamField>
+
+<ParamField path="body.offset" type="number" default="0">
+  Combined with `period`, causes grants to occur at `n * period + offset`. Useful to stagger execution of multiple federates that share the same period.
+
+  _API:_ `helicsFederateInfoSetTimeProperty` with `HELICS_PROPERTY_TIME_OFFSET` [141]
+</ParamField>
+
+<ParamField path="body.time_delta" type="number" default="1ns">
+  Minimum time increment between successive grants. HELICS will not grant a time sooner than `last_granted + time_delta`.
+
+  _API:_ `helicsFederateInfoSetTimeProperty` with `HELICS_PROPERTY_TIME_DELTA` [137]
+  _Alternative names:_ `timeDelta`, `timedelta`
+</ParamField>
+
+<ParamField path="body.input_delay" type="number" default="0">
+  Adds a simulated propagation delay (in seconds) between when a value arrives at the federate and when the federate is notified. Applies to both value and message signals.
+
+  _API:_ `helicsFederateInfoSetTimeProperty` with `HELICS_PROPERTY_INPUT_TIME_DELAY` [148]
+  _Alternative names:_ `inputdelay`, `inputDelay`
+</ParamField>
+
+<ParamField path="body.output_delay" type="number" default="0">
+  Adds a simulated propagation delay (in seconds) to signals sent by the federate. Applies to both value and message signals.
+
+  _API:_ `helicsFederateInfoSetTimeProperty` with `HELICS_TIME_PROPERTY_OUTPUT_TIME_DELAY` [150]
+  _Alternative names:_ `outputdelay`, `outputDelay`
+</ParamField>
+
+<ParamField path="body.uninterruptible" type="boolean" default="false">
+  When true, prevents early time grants caused by incoming messages. The federate will only be granted times it explicitly requested, ignoring earlier arrivals. Useful for controllers that must execute at fixed intervals.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_UNINTERRUPTIBLE` [1]
+</ParamField>
+
+<ParamField path="body.wait_for_current_time_update" type="boolean" default="false">
+  If true, the federate will not be granted its requested time until all other federates have completed at least one iteration at the current time. Useful for establishing a fixed execution order without full iteration.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_WAIT_FOR_CURRENT_TIME_UPDATE` [10]
+</ParamField>
+
+<ParamField path="body.restrictive_time_policy" type="boolean" default="false">
+  Forces HELICS to use the most conservative time granting mode. Useful in federations where some federate may trigger cascading updates that are not visible to the time management algorithm.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_RESTRICTIVE_TIME_POLICY` [11]
+</ParamField>
+
+<ParamField path="body.real_time" type="boolean" default="false">
+  Synchronizes simulated time to wall-clock time within the tolerance defined by `rt_lag` and `rt_lead`. If the simulation runs faster than real time, HELICS inserts delays. If slower, it may force-grant time, which can cause non-deterministic behavior.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_REALTIME` [16]
+</ParamField>
+
+<ParamField path="body.rt_lag" type="number" default="0.2">
+  Maximum allowed wall-clock lag behind simulated time, in seconds, before HELICS force-grants a time step. Set to `maxVal` to disable force grants.
+
+  _API:_ `helicsFederateInfoSetTimeProperty` with `HELICS_PROPERTY_TIME_RT_LAG` [143]
+</ParamField>
+
+<ParamField path="body.rt_lead" type="number" default="0.2">
+  Maximum allowed simulated time lead over wall-clock time, in seconds. HELICS inserts delays to stay within this bound.
+
+  _API:_ `helicsFederateInfoSetTimeProperty` with `HELICS_PROPERTY_TIME_RT_LEAD` [144]
+</ParamField>
+
+## Iteration options
+
+<ParamField path="body.max_iterations" type="number" default="50">
+  Maximum number of iterations allowed at a single simulation time step. When any federate reaches this count, HELICS grants the next available time.
+
+  _API:_ `helicsFederateInfoSetIntegerProperty` with `HELICS_PROPERTY_INT_MAX_ITERATIONS` [259]
+  _Alternative names:_ `maxiterations`, `maxIteration`
+</ParamField>
+
+<ParamField path="body.rollback" type="boolean" default="false">
+  Indicates the federate is capable of rolling back its state. Allows HELICS to make more efficient time grants.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_ROLLBACK` [12]
+</ParamField>
+
+<ParamField path="body.forward_compute" type="boolean" default="false">
+  Indicates the federate can compute ahead of its granted time and may roll back. Enables additional federation-wide optimization.
+
+  _API:_ `helicsFederateInfoSetFlagOption` with `HELICS_FLAG_FORWARD_COMPUTE` [14]
+</ParamField>
+
+## Publication configuration
+
+Each entry in the `publications` array configures one published value interface.
+
+```json
+"publications": [
+  {
+    "key": "voltage",
+    "type": "double",
+    "unit": "kV",
+    "global": true,
+    "only_transmit_on_change": false,
+    "tolerance": -1.0,
+    "buffer_data": false,
+    "connection_required": false,
+    "info": ""
+  }
+]
+```
+
+<AccordionGroup>
+  <Accordion title="Publication fields">
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `key` | Yes | — | Unique identifier for the publication within the federate (globally unique if `global: true`) |
+| `type` | No | `""` | Data type string: `double`, `int`, `string`, `complex`, `vector`, `boolean`, `time`, `json`, etc. |
+| `unit` | No | `""` | Physical unit string (e.g., `kV`, `m/s^2`). HELICS validates and converts compatible units. |
+| `global` | No | `false` | When true, registers as a global publication (key must be unique across the entire federation) |
+| `only_transmit_on_change` | No | `false` | Skip publishing if the value has not changed since the last publish |
+| `tolerance` | No | `-1` | Minimum numerical change required to trigger an `only_transmit_on_change` update |
+| `buffer_data` | No | `false` | Buffer the last published value so late-joining subscribers receive it |
+| `connection_required` | No | `false` | Error if no subscriber connects to this publication by initialization time |
+| `info` | No | `""` | Arbitrary user string attached to the publication (queryable) |
+
+  </Accordion>
+</AccordionGroup>
+
+## Subscription configuration
+
+Each entry in the `subscriptions` array creates an unnamed input targeting a specific global publication.
+
+```json
+"subscriptions": [
+  {
+    "key": "otherFed/current",
+    "unit": "A",
+    "only_update_on_change": false,
+    "default": 0.0
+  }
+]
+```
+
+<AccordionGroup>
+  <Accordion title="Subscription fields">
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `key` | Yes | — | Full name of the publication to subscribe to (`fedName/pubKey` unless the publication is global) |
+| `unit` | No | `""` | Expected unit. HELICS will attempt conversion if the source and target units are compatible. |
+| `only_update_on_change` | No | `false` | Only notify the federate of a new value when it differs from the previous one |
+| `default` | No | `0` | Value returned by the input until the first publication is received |
+
+  </Accordion>
+</AccordionGroup>
+
+## Input configuration
+
+Named inputs provide more control than subscriptions and can receive data from multiple publications simultaneously.
+
+```json
+"inputs": [
+  {
+    "key": "voltage_in",
+    "type": "double",
+    "unit": "kV",
+    "targets": ["pub1", "pub2"],
+    "multi_input_handling_method": "average",
+    "single_connection_only": false,
+    "multiple_connections_allowed": true,
+    "default": 0.0
+  }
+]
+```
+
+<AccordionGroup>
+  <Accordion title="Input fields">
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `key` | Yes | — | Name of the input (federate-scoped unless `global: true`) |
+| `type` | No | `""` | Expected data type for strict type checking |
+| `unit` | No | `""` | Expected unit, HELICS converts compatible units |
+| `targets` | No | `""` | One or more publication keys this input receives from |
+| `multi_input_handling_method` | No | `""` | How to combine multiple inputs: `no_op`, `vectorize`, `and`, `or`, `sum`, `diff`, `max`, `min`, `average` |
+| `single_connection_only` | No | `false` | Error if more than one publication connects |
+| `multiple_connections_allowed` | No | `false` | Explicitly allow multiple connections |
+| `default` | No | `0` | Default value before the first update |
+
+  </Accordion>
+</AccordionGroup>
+
+## Endpoint configuration
+
+Endpoints are used by message federates to send and receive packets.
+
+```json
+"endpoints": [
+  {
+    "name": "control",
+    "type": "json",
+    "global": true,
+    "destination": "controller/receive",
+    "info": ""
+  }
+]
+```
+
+<AccordionGroup>
+  <Accordion title="Endpoint fields">
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `name` | Yes | — | Name of the endpoint (federate-scoped unless `global: true`) |
+| `type` | No | `""` | Type string for the messages this endpoint sends/receives |
+| `global` | No | `false` | Register as a globally named endpoint |
+| `destination` | No | `""` | Default destination endpoint name (can also use `target`) |
+| `info` | No | `""` | Arbitrary user string (queryable) |
+
+  </Accordion>
+</AccordionGroup>
+
+## Filter configuration
+
+Filters intercept and modify messages in transit. They operate on messages passing through endpoints and can be registered on any federate or directly on a core.
+
+```json
+"filters": [
+  {
+    "name": "delay_filter",
+    "source_targets": "myFed/control",
+    "destination_targets": "",
+    "operation": "delay",
+    "properties": {
+      "name": "delay",
+      "value": 0.1
+    },
+    "info": ""
+  }
+]
+```
+
+<AccordionGroup>
+  <Accordion title="Filter operation types and properties">
+
+| Operation | Properties | Description |
+|---|---|---|
+| `delay` | `delay` (seconds) | Adds a fixed delay to all matched messages |
+| `randomdelay` | `lower_bound`, `upper_bound` (seconds) | Adds a random delay uniformly distributed in `[lower, upper]` |
+| `randomdrop` | `prob` (0.0–1.0) | Drops each message with the given probability |
+| `reroute` | `newdestination` (endpoint name) | Changes the destination of matched messages |
+| `clone` | `delivery_endpoint` | Delivers a copy of each message to an additional endpoint |
+| `firewall` | `entry`, `exit` (time bounds) | Blocks messages outside the allowed time window |
+| `custom` | (user-defined via callback) | Allows arbitrary message transformation via a registered callback |
+
+  </Accordion>
+</AccordionGroup>
+
+## Translator configuration
+
+Translators bridge value interfaces (publications/inputs) and message interfaces (endpoints), enabling interoperability between the two communication paradigms.
+
+```json
+"translators": [
+  {
+    "name": "my_translator",
+    "type": "JSON",
+    "source_targets": "myFed/voltage",
+    "destination_targets": "controller/input"
+  }
+]
+```
+
+| Type | Description |
+|---|---|
+| `JSON` | Serializes/deserializes values as JSON strings |
+| `binary` | Uses a compact binary representation |
+| `custom` | User-defined via a registered callback |
+
+<Tip>
+Configuration options are case-insensitive and support `camelCase`, `snake_case`, and lowercase forms. For example, `time_delta`, `timeDelta`, and `timedelta` are all equivalent.
+</Tip>

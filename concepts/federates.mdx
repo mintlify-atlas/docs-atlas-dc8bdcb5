@@ -1,0 +1,190 @@
+---
+title: 'Federates, Cores, and Brokers Explained for HELICS'
+description: 'What HELICS federates are, the four federate types, the federation lifecycle, and how cores and brokers connect simulators into a co-simulation.'
+keywords: ['federate', 'federation', 'core', 'broker', 'ValueFederate', 'MessageFederate', 'CombinationFederate', 'CallbackFederate']
+---
+
+A **federate** is a running instance of a simulator that has been integrated with HELICS. It is the fundamental unit of a HELICS co-simulation. Each federate models some portion of the overall system—perhaps the batteries in a fleet of electric vehicles, or the chargers those batteries connect to—and exchanges values or messages with other federates through the HELICS framework. A collection of federates running together to answer a shared research question is called a **federation**.
+
+## What a federate is
+
+When talking about a simulator in the abstract—GridLAB-D, OpenDSS, EnergyPlus—we say "simulator." The moment you launch a specific instance of that simulator with a specific model, configured to participate in a co-simulation, it becomes a federate. The distinction matters: a simulator on its own has no ability to join a HELICS federation, but a running instance configured with a HELICS core does.
+
+A single executable can contain multiple models. For example, one federate might model five EV batteries simultaneously, using a single HELICS interface for all five. As federations grow in complexity, it often becomes practical to use one federate per model object to keep configurations manageable.
+
+<Info>
+Every federate must have a unique name within the federation. HELICS uses this name to route signals to the correct destination. Duplicate names will produce an error at initialization.
+</Info>
+
+## Types of federates
+
+HELICS defines four federate types, distinguished by the kinds of signals they exchange and the API classes they use.
+
+<Tabs>
+  <Tab title="ValueFederate">
+    A `ValueFederate` (C++ class: `helics::ValueFederate`) exchanges **value signals**—physical quantities such as voltages, currents, temperatures, or flow rates. Value signals represent the physics at the boundary between two simulators. They are persistent: once published, a value remains available to subscribers until a new one replaces it.
+
+    Value federates are configured with publications and subscriptions (or named inputs). They are created in code with:
+
+    ```cpp
+    #include <helics/application_api/ValueFederate.hpp>
+
+    helics::FederateInfo fi;
+    fi.setPeriod(1.0);  // 1-second time step
+    helics::ValueFederate vfed("BatteryFederate", fi);
+    ```
+
+    Or from a JSON configuration file:
+
+    ```python
+    import helics as h
+    fed = h.helicsCreateValueFederateFromConfig("battery_config.json")
+    ```
+  </Tab>
+  <Tab title="MessageFederate">
+    A `MessageFederate` (C++ class: `helics::MessageFederate`) exchanges **message signals**—directed, uniquely identified packets that model information traveling over a communication channel. Messages are consumed on receipt and not overwritten; multiple messages can queue at an endpoint before being processed.
+
+    Message federates use endpoints as their interface. They are suited for control signals, sensor data, protocol packets, and any data that conceptually traverses a network.
+
+    ```python
+    import helics as h
+    fed = h.helicsCreateMessageFederateFromConfig("controller_config.json")
+    ```
+  </Tab>
+  <Tab title="CombinationFederate">
+    A `CombinationFederate` (C++ class: `helics::CombinationFederate`) participates in both value and message exchange. Use this type when a federate must model physical behavior (value interfaces) and also send or receive control signals (message interfaces).
+
+    ```python
+    import helics as h
+    fed = h.helicsCreateCombinationFederateFromConfig("charger_config.json")
+    ```
+
+    The equivalent C++ API call:
+
+    ```cpp
+    #include <helics/application_api/CombinationFederate.hpp>
+    helics::CombinationFederate cfed("ChargerFederate", fi);
+    ```
+  </Tab>
+  <Tab title="CallbackFederate">
+    A `CallbackFederate` (C++ class: `helics::CallbackFederate`, inherits from `CombinationFederate`) is a special federate type designed for event-driven simulators. Rather than polling for time grants in a loop, a `CallbackFederate` registers callback functions that are invoked automatically when the federate is granted a time, when inputs are updated, or when the simulation ends.
+
+    ```cpp
+    #include <helics/application_api/CallbackFederate.hpp>
+    helics::CallbackFederate cbfed("EventFederate", fi);
+    cbfed.setTimeRequestEntryCallback([](helics::Time currentTime, helics::Time requestedTime, bool iterating) {
+        // called when entering a time request
+    });
+    ```
+  </Tab>
+</Tabs>
+
+### Choosing the right federate type
+
+| Requirement | Federate type |
+|---|---|
+| Physical values only (voltages, temperatures, flow rates) | `ValueFederate` |
+| Control signals, protocol messages, event data | `MessageFederate` |
+| Both physical values and control signals | `CombinationFederate` |
+| Event-driven execution with callbacks | `CallbackFederate` |
+
+## The federate lifecycle
+
+Every HELICS federate progresses through four stages during a co-simulation.
+
+<Steps>
+  <Step title="Creation">
+    The federate is instantiated and its interfaces (publications, subscriptions, inputs, endpoints) are registered with the HELICS core. This is done either through the API or by loading a JSON configuration file. No time advances during this stage.
+
+    ```python
+    import helics as h
+
+    fed = h.helicsCreateValueFederateFromConfig("fed_config.json")
+    # Collect interface objects registered in the config
+    pub = h.helicsFederateGetPublicationByIndex(fed, 0)
+    sub = h.helicsFederateGetInputByIndex(fed, 0)
+    ```
+  </Step>
+  <Step title="Initialization">
+    The federate calls `helicsFederateEnterInitializingMode()` and performs any setup required before time begins. Federates can publish initial values during this stage; those values become available to others at simulation time t=0 when execution begins. The federation can iterate in initialization mode to converge on a consistent initial state before proceeding.
+
+    ```python
+    h.helicsFederateEnterInitializingMode(fed)
+    # publish initial conditions if needed
+    h.helicsPublicationPublishDouble(pub, 0.0)
+    ```
+  </Step>
+  <Step title="Execution">
+    The federate enters execution mode—a blocking call that waits until all other federates are ready—then steps through simulated time in a loop. At each granted time, the federate reads its inputs, runs its internal simulation logic, publishes outputs, and requests the next time.
+
+    ```python
+    h.helicsFederateEnterExecutingMode(fed)
+
+    end_time = 3600.0  # simulate one hour
+    t = 0.0
+
+    while t < end_time:
+        t = h.helicsFederateRequestTime(fed, t + 1.0)
+        current = h.helicsInputGetDouble(sub)
+        # ... run simulation logic ...
+        h.helicsPublicationPublishDouble(pub, new_voltage)
+    ```
+  </Step>
+  <Step title="Finalization">
+    Once the federate has completed its contribution (typically when granted `HELICS_TIME_MAXTIME` or when the simulation end condition is met), it signals its departure to the rest of the federation and frees its resources.
+
+    ```python
+    h.helicsFederateFinalize(fed)
+    h.helicsFederateFree(fed)
+    h.helicsCloseLibrary()
+    ```
+
+    When all federates connected to a core have finalized, the core terminates. When all cores connected to a broker have terminated, the broker terminates. This cascade cleanly ends the co-simulation.
+  </Step>
+</Steps>
+
+## Cores
+
+The **core** is the HELICS library embedded inside a simulator that enables it to participate in a federation. Every federate has exactly one core. The core is responsible for:
+
+- Managing all interface registrations (publications, subscriptions, inputs, endpoints) for its federate
+- Coordinating time requests between the local federate and the broker
+- Routing messages to and from the broker
+
+Cores support multiple messaging transport protocols, configured via the `coreType` property. The default and most commonly used is ZeroMQ (`zmq`), but TCP, IPC (for in-memory same-machine communication), and MPI (for HPC clusters) are also supported.
+
+<Tip>
+In most co-simulations, one federate runs per core. However, a single executable can host multiple federates sharing one core—useful for simulators that natively manage multiple model instances.
+</Tip>
+
+## Brokers
+
+The **broker** is a standalone executable that serves as the central message router for the federation. Every core must register with a broker to participate. The broker:
+
+- Collects time requests from all connected cores and determines the next globally safe time to grant
+- Routes value and message signals to their intended recipients
+- Signals termination when all federates have finalized
+
+Start a HELICS broker from the command line before launching any federates:
+
+```bash
+helics_broker --federates=3 --loglevel=summary
+```
+
+HELICS also supports **broker hierarchies**: multiple brokers can connect to a root broker, allowing federates on different machines or networks to participate in the same federation. The root broker acts as the message router of last resort.
+
+<Warning>
+Every federate must be able to reach the broker before the co-simulation can begin. If a federate cannot connect to the broker within its timeout period, the federation will fail to initialize. Ensure broker address and port settings (`broker_address`, `port`) are consistent across all federate configurations.
+</Warning>
+
+## Value vs. message signals at a glance
+
+| | Values | Messages |
+|---|---|---|
+| Interface type | Publication / Subscription / Input | Endpoint |
+| Signal route | Fixed at initialization | Determined at transmission time |
+| Outgoing | 1 to many (broadcast) | 1 to 1 |
+| Incoming | Many to 1 | 1 to 1 |
+| Persistence | Current value always available | Consumed when received |
+| Filterable | No | Yes |
+| Typical use | Physical quantities | Control signals, protocol data |

@@ -1,0 +1,233 @@
+---
+title: "Simulation Tools with HELICS Co-Simulation Support"
+description: "Power systems, communications, buildings, and market tools with HELICS support via native code, Python wrappers, or FMI — and steps to add a new tool."
+keywords: ["helics tools", "GridLAB-D", "OpenDSS", "GridDyn", "MATPOWER", "ns-3", "EnergyPlus", "FESTIV", "helics integration"]
+---
+
+HELICS is domain-agnostic: any simulation tool can participate in a HELICS federation as long as it can exchange values and synchronize time through the HELICS API. A growing list of tools across electric power, communications, buildings, natural gas, and other domains already have integration support — either built into the tool itself, provided through an actively maintained wrapper, or made possible through the Functional Mock-up Interface (FMI). The table below describes the current state of integration for commonly-used tools.
+
+<Note>
+  Integration status and development activity vary across tools. Check the linked repositories for the most current build instructions and API compatibility.
+</Note>
+
+## Electric distribution
+
+<AccordionGroup>
+  <Accordion title="GridLAB-D">
+    [GridLAB-D](https://www.gridlabd.org/) is an open-source distribution power-flow simulator with models for distributed energy resources (DERs), residential thermal loads, and end-use appliances. HELICS support is available in the `develop` branch of the [upstream repository](https://github.com/gridlab-d/gridlab-d/tree/develop) and also in a CMake-based fork maintained by the [GMLC-TDC organization](https://github.com/GMLC-TDC/gridlab-d).
+
+    **Integration method:** Native — HELICS calls are compiled directly into GridLAB-D.
+  </Accordion>
+  <Accordion title="OpenDSS">
+    [OpenDSS](https://smartgrid.epri.com/SimulationTool.aspx) is an open-source distribution power-flow tool with support for harmonics, DER models, and protection coordination. Two Python interfaces provide HELICS integration:
+
+    - [OpenDSSDirect.py](https://github.com/dss-extensions/OpenDSSDirect.py): A direct engine interface that enables Linux and macOS use in addition to Windows.
+    - [PyDSS](https://github.com/NREL/PyDSS): Builds on OpenDSSDirect to add enhanced advanced inverter models, improved convergence for high-penetration DER scenarios, and flexible user-defined controls.
+
+    **Integration method:** Python wrapper.
+  </Accordion>
+  <Accordion title="CYME">
+    [CYME](http://www.cyme.com/software/cymdist/) is a commercial distribution analysis tool. It has been used with HELICS through a Python wrapper interface and through an FMI wrapper.
+
+    **Integration method:** Python wrapper or FMI.
+  </Accordion>
+</AccordionGroup>
+
+## Electric transmission
+
+<AccordionGroup>
+  <Accordion title="GridDyn">
+    [GridDyn](https://github.com/LLNL/GridDyn) is an open-source transmission power flow and dynamics simulator developed at Lawrence Livermore National Laboratory. HELICS support is provided through the [`cmake_updates` branch](https://github.com/LLNL/GridDyn/tree/cmake_update).
+
+    **Integration method:** Native.
+  </Accordion>
+  <Accordion title="MATPOWER">
+    [MATPOWER](http://www.pserc.cornell.edu/matpower/) is an open-source MATLAB-based tool for power flow and optimal power flow. HELICS support is under active development. MATPOWER also provides basic optimal power flow capability usable as a market simulator.
+
+    **Integration method:** MATLAB/Python wrapper (under development).
+  </Accordion>
+  <Accordion title="PSS/E">
+    [PSS/E](https://new.siemens.com/global/en/products/energy/services/transmission-distribution-smart-grid/consulting-and-planning/pss-software/pss-e.html) is Siemens' commercial transmission stability and power flow simulator. HELICS integration is provided through [PyPSSE](https://github.com/NREL/PyPSSE), available on PyPI as `NREL-pypsse`.
+
+    **Integration method:** Python wrapper (`PyPSSE`).
+  </Accordion>
+  <Accordion title="PowerWorld">
+    [PowerWorld](https://www.powerworld.com/) Simulator is a commercial interactive power system simulation package suited for analyzing high-voltage system operation over timescales from minutes to days.
+
+    **Integration method:** Python/COM interface.
+  </Accordion>
+  <Accordion title="InterPSS">
+    [InterPSS](http://www.interpss.org/) is a Java-based power systems simulator. HELICS support is under development. A use case walkthrough is available at the [HELICS Use Cases site](https://gmlc-tdc.github.io/HELICS-Use-Cases/PNNL-TD-Dynamic-Load/index.html).
+
+    **Integration method:** Java wrapper (under development).
+  </Accordion>
+  <Accordion title="PSST">
+    [PSST](https://github.com/kdheepak/psst) is an open-source Python-based unit commitment and economic dispatch simulator. HELICS examples are included in the HELICS Tutorial repository.
+
+    **Integration method:** Python (native API).
+  </Accordion>
+  <Accordion title="SAInt">
+    [SAInt](https://encoord.com/SAInt.html) is a commercial multi-energy system planning tool covering electric production cost, power flow, dynamics, natural gas, and district heating. A HELICS interface implementation is available in the [SAInt HELICS interface repository](https://github.com/NREL/SAInt_HELICS_interface).
+
+    **Integration method:** C#/.NET wrapper.
+  </Accordion>
+</AccordionGroup>
+
+## Real-time simulators
+
+<AccordionGroup>
+  <Accordion title="OPAL-RT">
+    [OPAL-RT](https://www.opal-rt.com/hardware-in-the-loop/) hardware-in-the-loop platforms have been connected to other simulations via HELICS on several projects.
+
+    **Integration method:** Custom wrapper.
+  </Accordion>
+  <Accordion title="RTDS">
+    [RTDS Technologies](https://www.rtds.com/) real-time digital simulators are targeted for HELICS integration on known upcoming projects.
+
+    **Integration method:** Planned/in progress.
+  </Accordion>
+</AccordionGroup>
+
+## Power markets and economics
+
+<AccordionGroup>
+  <Accordion title="FESTIV">
+    [FESTIV](https://github.com/NREL/FESTIV_MODEL) (Flexible Energy Scheduling Tool for Integrating Variable Generation) is an open-source tool for multi-timescale steady-state power system operations simulations covering unit commitment, economic dispatch, and simplified AGC.
+
+    **Integration method:** Python (native API).
+  </Accordion>
+  <Accordion title="PLEXOS">
+    [PLEXOS](https://energyexemplar.com/solutions/plexos/) is a commercial production cost simulator widely used for electricity market modeling. Support via OpenPLEXOS is under development.
+
+    **Integration method:** Wrapper (under development).
+  </Accordion>
+  <Accordion title="PyPower">
+    [PyPower](https://pypi.org/project/PYPOWER/) is a Python port of MATPOWER providing DC and AC power flow and optimal power flow solvers. It does not have a standard HELICS integration package but has been used on several projects via the Python HELICS bindings.
+
+    **Integration method:** Python (ad hoc, via helics Python bindings).
+  </Accordion>
+</AccordionGroup>
+
+## Communications
+
+<AccordionGroup>
+  <Accordion title="ns-3">
+    [ns-3](https://www.nsnam.org/) is a discrete-event network simulator widely used for research in wireless, wired, and hybrid communication networks. The [HELICS ns-3 module](https://github.com/GMLC-TDC/helics-ns3) provides a full integration that lets ns-3 participate as a HELICS federate, enabling power-communication co-simulations where packet delays and losses are modeled realistically.
+
+    **Integration method:** Native C++ ns-3 module.
+  </Accordion>
+  <Accordion title="OMNeT++">
+    [OMNeT++](https://omnetpp.org/) is a component-based, open-architecture simulation environment primarily used for communication network simulation. Early-stage HELICS integration is available as a prototype in [helics-omnetpp](https://github.com/GMLC-TDC/helics-omnetpp).
+
+    **Integration method:** C++ module (prototype/early stage).
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+  HELICS includes built-in support for simple communication effects — delays, lossy channels, cloning, and filtering — through its filter system, without requiring an external network simulator. Use ns-3 or OMNeT++ when you need packet-level fidelity.
+</Tip>
+
+## Buildings and energy efficiency
+
+<AccordionGroup>
+  <Accordion title="EnergyPlus">
+    [EnergyPlus](https://energyplus.net/) is the U.S. Department of Energy's open-source whole-building energy simulation engine, widely used for modeling heating, cooling, lighting, and plug loads. EnergyPlus can be coupled to HELICS through its ExternalInterface or via the [OpenStudio](https://openstudio.net/) SDK.
+
+    **Integration method:** ExternalInterface / OpenStudio SDK.
+  </Accordion>
+  <Accordion title="OpenStudio">
+    [OpenStudio](https://openstudio.net/) is an SDK and application suite built on EnergyPlus that provides a higher-level API for building energy simulation, including scripting and measure-based workflows. OpenStudio federates can connect to HELICS to participate in grid-building co-simulations.
+
+    **Integration method:** Ruby/Python API wrapper.
+  </Accordion>
+</AccordionGroup>
+
+## Natural gas and multi-energy
+
+<AccordionGroup>
+  <Accordion title="NGFAST">
+    [NGFAST](http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.172.1169) is a natural gas pipeline network simulator that has been used in HELICS co-simulations for gas-electric interdependency studies.
+
+    **Integration method:** Custom wrapper.
+  </Accordion>
+  <Accordion title="GasModels.jl">
+    [GasModels.jl](https://github.com/lanl-ansi/GasModels.jl) is a Julia-based natural gas network optimization package. It can participate in HELICS federations via the HELICS Julia bindings.
+
+    **Integration method:** Julia (HELICS Julia bindings).
+  </Accordion>
+  <Accordion title="SAInt (multi-energy)">
+    SAInt (described under Electric Transmission above) also models natural gas pipelines, district heating networks, and joint gas-electric systems. The same [SAInt HELICS interface](https://github.com/NREL/SAInt_HELICS_interface) supports multi-energy scenarios.
+
+    **Integration method:** C#/.NET wrapper.
+  </Accordion>
+</AccordionGroup>
+
+## Optimization and analysis
+
+<AccordionGroup>
+  <Accordion title="GAMS">
+    [GAMS](https://www.gams.com/) (General Algebraic Modeling System) is a high-level optimization platform. It has been used in HELICS federations to solve dispatch or planning problems within a co-simulation loop.
+
+    **Integration method:** Python/GAMS API wrapper.
+  </Accordion>
+  <Accordion title="JuMP">
+    [JuMP](https://www.juliaopt.org/) is a Julia-based mathematical optimization modeling language. HELICS support is provided through the HELICS Julia bindings.
+
+    **Integration method:** Julia (HELICS Julia bindings).
+  </Accordion>
+</AccordionGroup>
+
+## Transportation
+
+<AccordionGroup>
+  <Accordion title="BEAM">
+    [BEAM](http://beam.lbl.gov/) (Behavior, Energy, Autonomy, and Mobility) is a transportation simulation platform developed at Lawrence Berkeley National Laboratory for modeling electric vehicle charging and mobility.
+
+    **Integration method:** Scala/JVM wrapper.
+  </Accordion>
+  <Accordion title="POLARIS">
+    [POLARIS](https://www.anl.gov/es/polaris-transportation-system-simulation-tool) is Argonne National Laboratory's transportation system simulation tool for large-scale metropolitan travel demand modeling.
+
+    **Integration method:** C++ wrapper.
+  </Accordion>
+</AccordionGroup>
+
+## Integration methods explained
+
+<Tabs>
+  <Tab title="Native integration">
+    The simulation tool calls HELICS API functions directly in its own source code. This is the tightest coupling: the tool registers publications and subscriptions, advances time through HELICS, and reads or writes values through HELICS handles. Examples: GridLAB-D, GridDyn, ns-3.
+  </Tab>
+  <Tab title="Python wrapper">
+    A Python script or package wraps the simulation tool's own API or subprocess interface and uses the `helics` Python package to communicate with the federation. This approach avoids modifying tool source code and is the most common path for commercial tools. Examples: PyPSSE for PSS/E, PyDSS for OpenDSS.
+  </Tab>
+  <Tab title="FMI wrapper">
+    A Functional Mock-up Unit (FMU) is generated from the tool and a HELICS-to-FMI bridge connects it to the federation. This is useful when the tool already supports FMI export but does not have a direct HELICS integration. Example: CYME.
+  </Tab>
+</Tabs>
+
+## Adding HELICS support to a new tool
+
+Any tool that can call a shared library or a subprocess can integrate with HELICS. The general process is:
+
+<Steps>
+  <Step title="Install HELICS">
+    Install HELICS via conda, pip, or a pre-built package for your platform. See [Installation](/installation/index).
+  </Step>
+  <Step title="Choose a language binding">
+    HELICS provides bindings for C++, C, Python, Java, MATLAB, Julia, and Octave. Choose the binding that matches your tool's scripting or extension language.
+  </Step>
+  <Step title="Register interfaces">
+    In your tool's initialization code, create a federate, then register the publications (outputs) and subscriptions (inputs) that represent the data your tool sends and receives.
+  </Step>
+  <Step title="Integrate the time loop">
+    Replace your tool's internal time loop with HELICS time requests. Call `helicsFederateRequestTime()` at each step; HELICS returns the granted time and you can then read updated inputs and publish your outputs.
+  </Step>
+  <Step title="Test with the Player and Recorder">
+    Use the [Player app](/apps/player-recorder) to supply synthetic inputs and the [Recorder app](/apps/player-recorder) to capture outputs. This lets you validate the integration without running other simulators.
+  </Step>
+</Steps>
+
+<Tip>
+  The [HELICS Examples repository](https://github.com/GMLC-TDC/HELICS-Examples) contains working integration examples in multiple languages and domains, including complete federations you can adapt as starting points.
+</Tip>

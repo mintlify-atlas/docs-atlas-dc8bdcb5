@@ -1,0 +1,115 @@
+{
+  "projectType": "framework",
+  "projectName": "HELICS",
+  "projectDescription": "A high-performance, multi-language co-simulation framework that enables multiple domain-specific simulators to exchange data and synchronize in time across scales from laptops to supercomputers.",
+  "theme": "aspen",
+  "primaryColor": "#005A9C",
+  "lightColor": "#3A8DCC",
+  "darkColor": "#003D6B",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation/index",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/co-simulation-overview",
+              "concepts/federates",
+              "concepts/timing",
+              "concepts/value-federates",
+              "concepts/message-federates"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/simulator-integration",
+              "guides/configuration",
+              "guides/filters-translators",
+              "guides/federation-architectures",
+              "guides/logging-debugging"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "advanced/broker-hierarchies",
+              "advanced/dynamic-federations",
+              "advanced/queries",
+              "advanced/orchestration",
+              "advanced/networking"
+            ]
+          },
+          {
+            "group": "Apps & Tools",
+            "pages": [
+              "apps/overview",
+              "apps/broker",
+              "apps/player-recorder",
+              "apps/supported-tools"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Language APIs",
+            "pages": [
+              "api/cpp-api",
+              "api/c-api",
+              "api/language-bindings"
+            ]
+          },
+          {
+            "group": "Configuration Reference",
+            "pages": [
+              "api/configuration-options",
+              "api/rest-queries"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-language support: C++, C, Python, Java, MATLAB, Julia, Octave, and more",
+    "Scalable from two federates on a laptop to 100,000+ on supercomputers",
+    "Distributed time synchronization across heterogeneous simulators",
+    "Value and message federate types for physics and control co-simulation",
+    "Built-in broker hierarchy for federate orchestration",
+    "Flexible configuration via JSON files, command-line, or direct API calls",
+    "Helper apps: Broker, Player, Recorder, Echo, Tracer, Clone, Connector",
+    "Cross-platform: Linux, macOS, Windows",
+    "Docker support and package manager distributions",
+    "Used in energy domain simulations: power grid, communications, buildings, transportation"
+  ],
+  "publicApiSurface": [
+    "ValueFederate — publishes and subscribes to physical values",
+    "MessageFederate — sends and receives endpoint messages",
+    "CombinationFederate — combines value and message federate capabilities",
+    "CallbackFederate — event-driven federate with registered callbacks",
+    "BrokerApp — programmatic broker management",
+    "CoreApp — programmatic core management",
+    "Publications / Subscriptions / Inputs — value interface objects",
+    "Endpoints — message interface objects",
+    "Filters — message manipulation (delay, loss, clone, etc.)",
+    "Translators — convert between value and message interfaces",
+    "FederateInfo — federate configuration object",
+    "queryFunctions — runtime federation state queries",
+    "helicsCreateValueFederateFromConfig — create federate from JSON config",
+    "helicsCreateMessageFederateFromConfig — create message federate from JSON config",
+    "helicsCreateCombinationFederateFromConfig — create combination federate from JSON config",
+    "helics.h — unified C shared library API"
+  ]
+}
